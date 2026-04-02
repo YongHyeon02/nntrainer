@@ -327,6 +327,10 @@ avx2_approx_swiglu_alpha(__m256 x, __m256 s, __m256 alpha) noexcept -> __m256 {
 
 namespace nntrainer::avx2 {
 
+// Forward declarations for internal helpers used across the file
+static inline __m256 exp256_ps(__m256 x);
+static float hsum_avx(__m256 v);
+
 /**
  * @brief struct of q4_0x8 block
  */
@@ -706,16 +710,25 @@ static inline void convert_q4_0x8_noshuffle(const void *src,
 
 // ================== wrappers for your K,N combinations ==================
 // K = 3072 (UNIT = 768)
+/**
+ * @brief convert_q4_0x8_shuffle for K=3072 N=98304
+ */
 void convert_q4_0x8_shuffle_K3072_N98304(const void *src, uint16_t *d_out,
                                          uint8_t *qs_out) {
   // groups = (N*8)/UNIT = 1024
   convert_q4_0x8_noshuffle<768, 1024>(src, d_out, qs_out);
 }
+/**
+ * @brief convert_q4_0x8_shuffle for K=3072 N=36864
+ */
 void convert_q4_0x8_shuffle_K3072_N36864(const void *src, uint16_t *d_out,
                                          uint8_t *qs_out) {
   // groups = 384
   convert_q4_0x8_noshuffle<768, 384>(src, d_out, qs_out);
 }
+/**
+ * @brief convert_q4_0x8_shuffle for K=3072 N=3072
+ */
 void convert_q4_0x8_shuffle_K3072_N3072(const void *src, uint16_t *d_out,
                                         uint8_t *qs_out) {
   // groups = 32
@@ -723,16 +736,25 @@ void convert_q4_0x8_shuffle_K3072_N3072(const void *src, uint16_t *d_out,
 }
 
 // K = 8192 (UNIT = 2048)
+/**
+ * @brief convert_q4_0x8_shuffle for K=8192 N=98304
+ */
 void convert_q4_0x8_shuffle_K8192_N98304(const void *src, uint16_t *d_out,
                                          uint8_t *qs_out) {
   // groups = 384
   convert_q4_0x8_noshuffle<2048, 384>(src, d_out, qs_out);
 }
+/**
+ * @brief convert_q4_0x8_shuffle for K=8192 N=36864
+ */
 void convert_q4_0x8_shuffle_K8192_N36864(const void *src, uint16_t *d_out,
                                          uint8_t *qs_out) {
   // groups = 144
   convert_q4_0x8_noshuffle<2048, 144>(src, d_out, qs_out);
 }
+/**
+ * @brief convert_q4_0x8_shuffle for K=8192 N=3072
+ */
 void convert_q4_0x8_shuffle_K8192_N3072(const void *src, uint16_t *d_out,
                                         uint8_t *qs_out) {
   // groups = 12
@@ -1145,6 +1167,167 @@ void gelu_v2(const unsigned int N, const float *X, float *Y) {
   }
 }
 
+void tanh_gelu(const unsigned int N, const float *X, float *Y) {
+  unsigned int i = 0;
+
+  for (; i + 8 <= N; i += 8) {
+    __m256 x = _mm256_loadu_ps(&X[i]);
+    __m256 y = poly_gelu_tanh_avx2(x);
+    _mm256_storeu_ps(&Y[i], y);
+  }
+
+  for (; i < N; ++i) {
+    const float x = X[i];
+    Y[i] = 0.5f * x *
+           (1.0f + std::tanh(0.7978845608f * (x + 0.044715f * x * x * x)));
+  }
+}
+
+void tanh_gelu_mul(const unsigned int N, float *X, float *Y, float *Z) {
+  unsigned int i = 0;
+
+  for (; i + 8 <= N; i += 8) {
+    __m256 y = _mm256_loadu_ps(&Y[i]);
+    __m256 g = poly_gelu_tanh_avx2(y);
+    __m256 z = _mm256_loadu_ps(&Z[i]);
+    _mm256_storeu_ps(&X[i], _mm256_mul_ps(g, z));
+  }
+
+  for (; i < N; ++i) {
+    const float y = Y[i];
+    float gelu_y = 0.5f * y *
+                   (1.0f + std::tanh(0.7978845608f *
+                                     (y + 0.044715f * y * y * y)));
+    X[i] = gelu_y * Z[i];
+  }
+}
+
+void tanh_gelu_v2_mul(const unsigned int N, float *X, float *Y, float *Z) {
+  tanh_gelu_mul(N, X, Y, Z);
+}
+
+float max_val(const unsigned int N, float *X) {
+  unsigned int i = 0;
+  __m256 vmax = _mm256_set1_ps(-std::numeric_limits<float>::infinity());
+
+  for (; i + 8 <= N; i += 8) {
+    __m256 x = _mm256_loadu_ps(&X[i]);
+    vmax = _mm256_max_ps(vmax, x);
+  }
+
+  // Horizontal max reduction
+  __m128 hi = _mm256_extractf128_ps(vmax, 1);
+  __m128 lo = _mm256_castps256_ps128(vmax);
+  lo = _mm_max_ps(lo, hi);
+  __m128 shuf = _mm_movehl_ps(lo, lo);
+  lo = _mm_max_ps(lo, shuf);
+  shuf = _mm_movehdup_ps(lo);
+  lo = _mm_max_ss(lo, shuf);
+  float result = _mm_cvtss_f32(lo);
+
+  for (; i < N; ++i) {
+    result = std::max(result, X[i]);
+  }
+  return result;
+}
+
+void softmax(const unsigned int N, float *X, float *Y) {
+  // Step 1: find max
+  float max_x = max_val(N, X);
+  __m256 vmax = _mm256_set1_ps(max_x);
+
+  // Step 2: exp(x - max) and accumulate sum
+  unsigned int i = 0;
+  unsigned int N8 = (N & ~(7));
+  __m256 vsum = _mm256_setzero_ps();
+
+  for (; i < N8; i += 8) {
+    __m256 x = _mm256_loadu_ps(&X[i]);
+    __m256 e = exp256_ps(_mm256_sub_ps(x, vmax));
+    _mm256_storeu_ps(&Y[i], e);
+    vsum = _mm256_add_ps(vsum, e);
+  }
+
+  float sum = hsum_avx(vsum);
+  for (; i < N; ++i) {
+    float e = std::exp(X[i] - max_x);
+    Y[i] = e;
+    sum += e;
+  }
+
+  // Step 3: normalize
+  float inv_sum = 1.0f / sum;
+  __m256 vinv = _mm256_set1_ps(inv_sum);
+
+  i = 0;
+  for (; i < N8; i += 8) {
+    __m256 y = _mm256_loadu_ps(&Y[i]);
+    _mm256_storeu_ps(&Y[i], _mm256_mul_ps(y, vinv));
+  }
+  for (; i < N; ++i) {
+    Y[i] *= inv_sum;
+  }
+}
+
+void inv_sqrt_inplace(const unsigned int N, float *X) {
+  unsigned int i = 0;
+  const __m256 three = _mm256_set1_ps(3.0f);
+  const __m256 half = _mm256_set1_ps(0.5f);
+
+  for (; i + 8 <= N; i += 8) {
+    __m256 x = _mm256_loadu_ps(&X[i]);
+    __m256 est = _mm256_rsqrt_ps(x);
+    // Newton-Raphson: y = 0.5 * y * (3 - x * y * y)
+    __m256 xy2 = _mm256_mul_ps(x, _mm256_mul_ps(est, est));
+    __m256 refined = _mm256_mul_ps(
+      _mm256_mul_ps(half, est), _mm256_sub_ps(three, xy2));
+    _mm256_storeu_ps(&X[i], refined);
+  }
+
+  for (; i < N; ++i) {
+    X[i] = 1.0f / std::sqrt(X[i]);
+  }
+}
+
+void sine(const unsigned int N, float *X, float *Y, float alpha, float beta) {
+  for (unsigned int i = 0; i < N; ++i) {
+    Y[i] = std::sin(static_cast<float>(alpha) * X[i]) *
+            static_cast<float>(beta);
+  }
+}
+
+void cosine(const unsigned int N, float *X, float *Y, float alpha,
+            float beta) {
+  for (unsigned int i = 0; i < N; ++i) {
+    Y[i] = std::cos(static_cast<float>(alpha) * X[i]) *
+            static_cast<float>(beta);
+  }
+}
+
+void calc_trigonometric_vals_dup(unsigned int N_half, float *angle, float *cos_,
+                                 float *sin_, unsigned int from,
+                                 float attention_scaling) {
+  cosine(N_half, angle, cos_, static_cast<float>(from), attention_scaling);
+  sine(N_half, angle, sin_, static_cast<float>(from), attention_scaling);
+
+  unsigned int N = 2 * N_half;
+
+  // Copy first half to second half (duplicate)
+  unsigned int i = N_half;
+  unsigned int i_half = 0;
+
+  for (; i + 8 <= N && i_half + 8 <= N_half; i += 8, i_half += 8) {
+    __m256 c = _mm256_loadu_ps(&cos_[i_half]);
+    __m256 s = _mm256_loadu_ps(&sin_[i_half]);
+    _mm256_storeu_ps(&cos_[i], c);
+    _mm256_storeu_ps(&sin_[i], s);
+  }
+  for (; i < N && i_half < N_half; ++i, ++i_half) {
+    cos_[i] = cos_[i_half];
+    sin_[i] = sin_[i_half];
+  }
+}
+
 void ele_mul(const unsigned int N, const float *X, const float *Y, float *Z,
              float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
@@ -1226,6 +1409,92 @@ void ele_add(const unsigned int N, const float *X, const float *Y, float *Z,
     // TODO: AVX2 implementation if used
     for (unsigned int i = 0; i < N; ++i) {
       *Z = *X + alpha * *Y + ((0.0f == beta) ? 0.0f : beta * *Z);
+      X += o_stride;
+      Y += i_stride;
+      Z += o_stride;
+    }
+  }
+}
+
+void ele_sub(const unsigned int N, const float *X, const float *Y, float *Z,
+             float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
+    unsigned int N8 = (N & ~(7));
+    if (i_stride == 0) {
+      float vy8[8] = {Y[0], Y[0], Y[0], Y[0], Y[0], Y[0], Y[0], Y[0]};
+      auto y = _mm256_loadu_ps(&vy8[0]);
+      for (unsigned int i = 0; i < N8; i += 8) {
+        auto x = _mm256_loadu_ps(X);
+        auto z = _mm256_sub_ps(x, y);
+        _mm256_storeu_ps(Z, z);
+        X += 8;
+        Y += i_stride * 8;
+        Z += 8;
+      }
+    } else {
+      for (unsigned int i = 0; i < N8; i += 8) {
+        auto x = _mm256_loadu_ps(X);
+        auto y = _mm256_loadu_ps(Y);
+        auto z = _mm256_sub_ps(x, y);
+        _mm256_storeu_ps(Z, z);
+        X += 8;
+        Y += i_stride * 8;
+        Z += 8;
+      }
+    }
+    for (unsigned int i = N8; i < N; ++i) {
+      *Z = *X - *Y;
+      X++;
+      Y += i_stride;
+      Z++;
+    }
+  } else {
+    for (unsigned int i = 0; i < N; ++i) {
+      *Z = *X - alpha * *Y + ((0.0f == beta) ? 0.0f : beta * *Z);
+      X += o_stride;
+      Y += i_stride;
+      Z += o_stride;
+    }
+  }
+}
+
+void ele_div(const unsigned int N, const float *X, const float *Y, float *Z,
+             float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
+    unsigned int N8 = (N & ~(7));
+    if (i_stride == 0) {
+      float vy8[8] = {Y[0], Y[0], Y[0], Y[0], Y[0], Y[0], Y[0], Y[0]};
+      auto y = _mm256_loadu_ps(&vy8[0]);
+      for (unsigned int i = 0; i < N8; i += 8) {
+        auto x = _mm256_loadu_ps(X);
+        auto z = _mm256_div_ps(x, y);
+        _mm256_storeu_ps(Z, z);
+        X += 8;
+        Y += i_stride * 8;
+        Z += 8;
+      }
+    } else {
+      for (unsigned int i = 0; i < N8; i += 8) {
+        auto x = _mm256_loadu_ps(X);
+        auto y = _mm256_loadu_ps(Y);
+        auto z = _mm256_div_ps(x, y);
+        _mm256_storeu_ps(Z, z);
+        X += 8;
+        Y += i_stride * 8;
+        Z += 8;
+      }
+    }
+    for (unsigned int i = N8; i < N; ++i) {
+      *Z = *X / *Y;
+      X++;
+      Y += i_stride;
+      Z++;
+    }
+  } else {
+    for (unsigned int i = 0; i < N; ++i) {
+      *Z = *X / (alpha * *Y) + ((0.0f == beta) ? 0.0f : beta * *Z);
       X += o_stride;
       Y += i_stride;
       Z += o_stride;

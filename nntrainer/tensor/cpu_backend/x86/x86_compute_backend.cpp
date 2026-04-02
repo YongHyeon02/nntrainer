@@ -140,16 +140,16 @@ void scopy_int8_to_float32(const unsigned int N, const int8_t *X,
 
 template <>
 void sine(const unsigned int N, float *X, float *Y, float alpha, float beta) {
-  __fallback_sine(N, X, Y, alpha, beta);
+  nntrainer::avx2::sine(N, X, Y, alpha, beta);
 }
 
 template <>
 void cosine(const unsigned int N, float *X, float *Y, float alpha, float beta) {
-  __fallback_cosine(N, X, Y, alpha, beta);
+  nntrainer::avx2::cosine(N, X, Y, alpha, beta);
 }
 
 void inv_sqrt_inplace(const unsigned int N, float *X) {
-  __fallback_inv_sqrt_inplace(N, X);
+  nntrainer::avx2::inv_sqrt_inplace(N, X);
 }
 
 void ele_mul(const unsigned int N, const float *X, const float *Y, float *Z,
@@ -167,13 +167,13 @@ void ele_add(const unsigned int N, const float *X, const float *Y, float *Z,
 void ele_sub(const unsigned N, const float *X, const float *Y, float *Z,
              float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
-  __fallback_ele_sub(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+  nntrainer::avx2::ele_sub(N, X, Y, Z, alpha, beta, i_stride, o_stride);
 }
 
 void ele_div(const unsigned N, const float *X, const float *Y, float *Z,
              float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
-  __fallback_ele_div(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+  nntrainer::avx2::ele_div(N, X, Y, Z, alpha, beta, i_stride, o_stride);
 }
 
 void saxpy(const unsigned int N, const float alpha, const float *X,
@@ -283,8 +283,8 @@ template <>
 void calc_trigonometric_vals_dup(unsigned int N_half, float *angle, float *cos_,
                                  float *sin_, unsigned int from,
                                  float attention_scaling) {
-  __fallback_calc_trigonometric_vals_dup(N_half, angle, cos_, sin_, from,
-                                         attention_scaling);
+  nntrainer::avx2::calc_trigonometric_vals_dup(N_half, angle, cos_, sin_, from,
+                                               attention_scaling);
 }
 
 void swiglu(const unsigned int N, float *X, float *Y, float *Z) {
@@ -296,8 +296,7 @@ void swiglu(const unsigned int N, float *X, float *Y, float *Z, float alpha) {
 }
 
 void tanh_gelu(const unsigned int N, const float *X, float *Y) {
-  // AVX implmenetation will be implemented, now fallback instead
-  __fallback_tanh_gelu(N, X, Y);
+  nntrainer::avx2::tanh_gelu(N, X, Y);
 }
 
 void tanh_gelu_v2(const unsigned int N, const float *X, float *Y) {
@@ -309,17 +308,19 @@ void gelu_v2(const unsigned int N, const float *X, float *Y) {
 }
 
 void tanh_gelu_mul(const unsigned int N, float *X, float *Y, float *Z) {
-  __fallback_tanh_gelu_mul(N, X, Y, Z);
+  nntrainer::avx2::tanh_gelu_mul(N, X, Y, Z);
 }
 
 void tanh_gelu_v2_mul(const unsigned int N, float *X, float *Y, float *Z) {
-  __fallback_tanh_gelu_mul(N, X, Y, Z);
+  nntrainer::avx2::tanh_gelu_v2_mul(N, X, Y, Z);
 }
 
-float max_val(const unsigned int N, float *X) { return __fallback_max(N, X); }
+float max_val(const unsigned int N, float *X) {
+  return nntrainer::avx2::max_val(N, X);
+}
 
 void softmax(const unsigned int N, float *X, float *Y) {
-  __fallback_softmax(N, X, Y);
+  nntrainer::avx2::softmax(N, X, Y);
 }
 
 template <>
@@ -477,7 +478,7 @@ template <>
 void rms_norm_wrt_width_fp16_intrinsic(const float *__restrict X,
                                        float *__restrict Y, size_t H, size_t W,
                                        float epsilon) {
-  __fallback_rms_norm_wrt_width_fp16_intrinsic(X, Y, H, W, epsilon);
+  nntrainer::avx2::rms_norm_wrt_width_fp32_intrinsic(X, Y, H, W, epsilon);
 }
 
 template <>
