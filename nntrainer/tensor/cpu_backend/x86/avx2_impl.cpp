@@ -1290,41 +1290,92 @@ void inv_sqrt_inplace(const unsigned int N, float *X) {
 }
 
 void sine(const unsigned int N, float *X, float *Y, float alpha, float beta) {
-  for (unsigned int i = 0; i < N; ++i) {
+  unsigned int i = 0;
+  const __m256 v_alpha = _mm256_set1_ps(alpha);
+  const __m256 v_beta = _mm256_set1_ps(beta);
+  const bool need_alpha = (alpha != 1.0f);
+  const bool need_beta = (beta != 1.0f);
+
+  for (; i + 8 <= N; i += 8) {
+    __m256 x = _mm256_loadu_ps(&X[i]);
+    if (need_alpha)
+      x = _mm256_mul_ps(x, v_alpha);
+    __m256 result = sin256_ps(x);
+    if (need_beta)
+      result = _mm256_mul_ps(result, v_beta);
+    _mm256_storeu_ps(&Y[i], result);
+  }
+
+  for (; i < N; ++i) {
     Y[i] = std::sin(static_cast<float>(alpha) * X[i]) *
-            static_cast<float>(beta);
+           static_cast<float>(beta);
   }
 }
 
-void cosine(const unsigned int N, float *X, float *Y, float alpha,
-            float beta) {
-  for (unsigned int i = 0; i < N; ++i) {
+void cosine(const unsigned int N, float *X, float *Y, float alpha, float beta) {
+  unsigned int i = 0;
+  const __m256 v_alpha = _mm256_set1_ps(alpha);
+  const __m256 v_beta = _mm256_set1_ps(beta);
+  const bool need_alpha = (alpha != 1.0f);
+  const bool need_beta = (beta != 1.0f);
+
+  for (; i + 8 <= N; i += 8) {
+    __m256 x = _mm256_loadu_ps(&X[i]);
+    if (need_alpha)
+      x = _mm256_mul_ps(x, v_alpha);
+    __m256 result = cos256_ps(x);
+    if (need_beta)
+      result = _mm256_mul_ps(result, v_beta);
+    _mm256_storeu_ps(&Y[i], result);
+  }
+
+  for (; i < N; ++i) {
     Y[i] = std::cos(static_cast<float>(alpha) * X[i]) *
-            static_cast<float>(beta);
+           static_cast<float>(beta);
   }
 }
 
 void calc_trigonometric_vals_dup(unsigned int N_half, float *angle, float *cos_,
                                  float *sin_, unsigned int from,
                                  float attention_scaling) {
-  cosine(N_half, angle, cos_, static_cast<float>(from), attention_scaling);
-  sine(N_half, angle, sin_, static_cast<float>(from), attention_scaling);
+  unsigned int i = 0;
+  const __m256 v_from = _mm256_set1_ps(static_cast<float>(from));
+  const __m256 v_scale = _mm256_set1_ps(attention_scaling);
+  const bool need_scale = (attention_scaling != 1.0f);
+
+  for (; i + 8 <= N_half; i += 8) {
+    __m256 x = _mm256_loadu_ps(&angle[i]);
+    x = _mm256_mul_ps(x, v_from);
+    __m256 s, c;
+    sincos256_ps(x, &s, &c);
+    if (need_scale) {
+      s = _mm256_mul_ps(s, v_scale);
+      c = _mm256_mul_ps(c, v_scale);
+    }
+    _mm256_storeu_ps(&cos_[i], c);
+    _mm256_storeu_ps(&sin_[i], s);
+  }
+
+  for (; i < N_half; ++i) {
+    cos_[i] = std::cos(static_cast<float>(from) * angle[i]) * attention_scaling;
+    sin_[i] = std::sin(static_cast<float>(from) * angle[i]) * attention_scaling;
+  }
 
   unsigned int N = 2 * N_half;
 
   // Copy first half to second half (duplicate)
-  unsigned int i = N_half;
-  unsigned int i_half = 0;
+  unsigned int j = N_half;
+  unsigned int j_half = 0;
 
-  for (; i + 8 <= N && i_half + 8 <= N_half; i += 8, i_half += 8) {
-    __m256 c = _mm256_loadu_ps(&cos_[i_half]);
-    __m256 s = _mm256_loadu_ps(&sin_[i_half]);
-    _mm256_storeu_ps(&cos_[i], c);
-    _mm256_storeu_ps(&sin_[i], s);
+  for (; j + 8 <= N && j_half + 8 <= N_half; j += 8, j_half += 8) {
+    __m256 c = _mm256_loadu_ps(&cos_[j_half]);
+    __m256 s = _mm256_loadu_ps(&sin_[j_half]);
+    _mm256_storeu_ps(&cos_[j], c);
+    _mm256_storeu_ps(&sin_[j], s);
   }
-  for (; i < N && i_half < N_half; ++i, ++i_half) {
-    cos_[i] = cos_[i_half];
-    sin_[i] = sin_[i_half];
+  for (; j < N && j_half < N_half; ++j, ++j_half) {
+    cos_[j] = cos_[j_half];
+    sin_[j] = sin_[j_half];
   }
 }
 

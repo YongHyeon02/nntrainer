@@ -15,6 +15,7 @@
 #define __AVX2_IMPL_H_
 #ifdef __cplusplus
 
+#include "avx2_mathfun.h"
 #include <cstdint>
 #include <limits.h>
 #include <limits>
