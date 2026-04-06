@@ -1456,7 +1456,7 @@ void ele_mul(const unsigned int N, const float *X, const float *Y, float *Z,
     } else {
       for (unsigned int i = 0; i < N; ++i) {
         *Z = *X * alpha * *Y + ((0.0f == beta) ? 0.0f : beta * *Z);
-        X++;
+        X += o_stride;
         Y += i_stride;
         Z += o_stride;
       }
@@ -1541,7 +1541,7 @@ void ele_add(const unsigned int N, const float *X, const float *Y, float *Z,
     } else {
       for (unsigned int i = 0; i < N; ++i) {
         *Z = *X + alpha * *Y + ((0.0f == beta) ? 0.0f : beta * *Z);
-        X++;
+        X += o_stride;
         Y += i_stride;
         Z += o_stride;
       }
@@ -1626,7 +1626,7 @@ void ele_sub(const unsigned int N, const float *X, const float *Y, float *Z,
     } else {
       for (unsigned int i = 0; i < N; ++i) {
         *Z = *X - alpha * *Y + ((0.0f == beta) ? 0.0f : beta * *Z);
-        X++;
+        X += o_stride;
         Y += i_stride;
         Z += o_stride;
       }
@@ -1713,7 +1713,7 @@ void ele_div(const unsigned int N, const float *X, const float *Y, float *Z,
     } else {
       for (unsigned int i = 0; i < N; ++i) {
         *Z = *X / (alpha * *Y) + ((0.0f == beta) ? 0.0f : beta * *Z);
-        X++;
+        X += o_stride;
         Y += i_stride;
         Z += o_stride;
       }
