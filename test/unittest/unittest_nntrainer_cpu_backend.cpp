@@ -1662,6 +1662,47 @@ TEST(nntrainer_cpu_backend_standalone, cosine_3072) {
   }
 }
 
+TEST(nntrainer_cpu_backend_standalone, tanh_gelu_v2_3072) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<float> X = generate_random_vector<float, false>(N);
+    std::vector<float> Y(N), Y_ref(N);
+
+    nntrainer::__fallback_tanh_gelu(N, X.data(), Y_ref.data());
+    nntrainer::tanh_gelu_v2(N, X.data(), Y.data());
+
+    auto mse = compute_mse(1, N, Y_ref, Y, false);
+    ASSERT_LE(mse, 0.00001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, calc_trigonometric_vals_dup_512) {
+  const unsigned int N_half = 512;
+  const unsigned int N = 2 * N_half;
+  const unsigned int from = 3;
+  const float attention_scaling = 0.5f;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<float> angle =
+      generate_random_vector<float, false>(N_half, 0.0f, 6.28f);
+    std::vector<float> cos_ref(N, 0.0f), sin_ref(N, 0.0f);
+    std::vector<float> cos_out(N, 0.0f), sin_out(N, 0.0f);
+
+    nntrainer::__fallback_calc_trigonometric_vals_dup(
+      N_half, angle.data(), cos_ref.data(), sin_ref.data(), from,
+      attention_scaling);
+    nntrainer::calc_trigonometric_vals_dup<float>(
+      N_half, angle.data(), cos_out.data(), sin_out.data(), from,
+      attention_scaling);
+
+    auto cos_mse = compute_mse(1, N, cos_ref, cos_out, false);
+    auto sin_mse = compute_mse(1, N, sin_ref, sin_out, false);
+    ASSERT_LE(cos_mse, 0.00001f);
+    ASSERT_LE(sin_mse, 0.00001f);
+  }
+}
+
 TEST(nntrainer_cpu_backend_standalone, rms_norm_fp16_template_float) {
   const size_t H = 16;
   const size_t W = 1024;
