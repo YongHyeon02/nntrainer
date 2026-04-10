@@ -13,11 +13,16 @@
  */
 
 #include <avx2_impl.h>
+#include "avx2_internal.h"
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <immintrin.h>
+#include <limits>
 #include <util_func.h>
+
+using namespace nntrainer::avx2::internal;
 
 namespace nntrainer::avx2 {
 
@@ -182,6 +187,880 @@ bool is_valid(const unsigned int N, const _Float16 *input) {
   }
 
   return true;
+}
+
+// ============================================================
+// FP16 elementwise operations
+// ============================================================
+
+void ele_mul(const unsigned int N, const _Float16 *X, const _Float16 *Y,
+             _Float16 *Z, float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
+    unsigned int N8 = (N & ~7u);
+    if (i_stride == 0) {
+      float y0_f32 = static_cast<float>(Y[0]);
+      __m256 vy = _mm256_set1_ps(y0_f32);
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 z = _mm256_mul_ps(x, vy);
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+      for (unsigned int i = N8; i < N; ++i) {
+        Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) * y0_f32);
+      }
+    } else if (i_stride == 1) {
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+        __m256 z = _mm256_mul_ps(x, y);
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+      for (unsigned int i = N8; i < N; ++i) {
+        Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) *
+                                     static_cast<float>(Y[i]));
+      }
+    } else {
+      for (unsigned int i = 0; i < N; ++i) {
+        Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) *
+                                     static_cast<float>(Y[i * i_stride]));
+      }
+    }
+  } else if (o_stride == 1 && (i_stride == 0 || i_stride == 1)) {
+    unsigned int N8 = (N & ~7u);
+    __m256 alpha_v = _mm256_set1_ps(alpha);
+    __m256 beta_v = _mm256_set1_ps(beta);
+
+    if (i_stride == 0) {
+      __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 z = _mm256_mul_ps(_mm256_mul_ps(x, vy), alpha_v);
+        if (beta != 0.0f) {
+          __m256 z_old =
+            _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
+          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+        }
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+    } else {
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+        __m256 z = _mm256_mul_ps(_mm256_mul_ps(x, y), alpha_v);
+        if (beta != 0.0f) {
+          __m256 z_old =
+            _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
+          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+        }
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+    }
+    for (unsigned int i = N8; i < N; ++i) {
+      float xf = static_cast<float>(X[i]);
+      float yf = static_cast<float>(Y[i * i_stride]);
+      float zf = xf * alpha * yf + ((0.0f == beta) ? 0.0f : beta * static_cast<float>(Z[i]));
+      Z[i] = static_cast<_Float16>(zf);
+    }
+  } else {
+    for (unsigned int i = 0; i < N; ++i) {
+      float xf = static_cast<float>(*X);
+      float yf = static_cast<float>(*Y);
+      float zf = xf * alpha * yf +
+                 ((0.0f == beta) ? 0.0f : beta * static_cast<float>(*Z));
+      *Z = static_cast<_Float16>(zf);
+      X += o_stride;
+      Y += i_stride;
+      Z += o_stride;
+    }
+  }
+}
+
+void ele_add(const unsigned int N, const _Float16 *X, const _Float16 *Y,
+             _Float16 *Z, float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
+    unsigned int N8 = (N & ~7u);
+    if (i_stride == 0) {
+      __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 z = _mm256_add_ps(x, vy);
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+      for (unsigned int i = N8; i < N; ++i) {
+        Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) +
+                                     static_cast<float>(Y[0]));
+      }
+    } else if (i_stride == 1) {
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+        __m256 z = _mm256_add_ps(x, y);
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+      for (unsigned int i = N8; i < N; ++i) {
+        Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) +
+                                     static_cast<float>(Y[i]));
+      }
+    } else {
+      for (unsigned int i = 0; i < N; ++i) {
+        Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) +
+                                     static_cast<float>(Y[i * i_stride]));
+      }
+    }
+  } else if (o_stride == 1 && (i_stride == 0 || i_stride == 1)) {
+    unsigned int N8 = (N & ~7u);
+    __m256 alpha_v = _mm256_set1_ps(alpha);
+    __m256 beta_v = _mm256_set1_ps(beta);
+
+    if (i_stride == 0) {
+      __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 z = _mm256_add_ps(x, _mm256_mul_ps(alpha_v, vy));
+        if (beta != 0.0f) {
+          __m256 z_old =
+            _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
+          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+        }
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+    } else {
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+        __m256 z = _mm256_add_ps(x, _mm256_mul_ps(alpha_v, y));
+        if (beta != 0.0f) {
+          __m256 z_old =
+            _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
+          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+        }
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+    }
+    for (unsigned int i = N8; i < N; ++i) {
+      float xf = static_cast<float>(X[i]);
+      float yf = static_cast<float>(Y[i * i_stride]);
+      float zf = xf + alpha * yf + ((0.0f == beta) ? 0.0f : beta * static_cast<float>(Z[i]));
+      Z[i] = static_cast<_Float16>(zf);
+    }
+  } else {
+    for (unsigned int i = 0; i < N; ++i) {
+      float xf = static_cast<float>(*X);
+      float yf = static_cast<float>(*Y);
+      float zf =
+        xf + alpha * yf +
+        ((0.0f == beta) ? 0.0f : beta * static_cast<float>(*Z));
+      *Z = static_cast<_Float16>(zf);
+      X += o_stride;
+      Y += i_stride;
+      Z += o_stride;
+    }
+  }
+}
+
+void ele_sub(const unsigned int N, const _Float16 *X, const _Float16 *Y,
+             _Float16 *Z, float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
+    unsigned int N8 = (N & ~7u);
+    if (i_stride == 0) {
+      __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 z = _mm256_sub_ps(x, vy);
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+      for (unsigned int i = N8; i < N; ++i) {
+        Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) -
+                                     static_cast<float>(Y[0]));
+      }
+    } else if (i_stride == 1) {
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+        __m256 z = _mm256_sub_ps(x, y);
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+      for (unsigned int i = N8; i < N; ++i) {
+        Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) -
+                                     static_cast<float>(Y[i]));
+      }
+    } else {
+      for (unsigned int i = 0; i < N; ++i) {
+        Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) -
+                                     static_cast<float>(Y[i * i_stride]));
+      }
+    }
+  } else if (o_stride == 1 && (i_stride == 0 || i_stride == 1)) {
+    unsigned int N8 = (N & ~7u);
+    __m256 alpha_v = _mm256_set1_ps(alpha);
+    __m256 beta_v = _mm256_set1_ps(beta);
+
+    if (i_stride == 0) {
+      __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 z = _mm256_sub_ps(x, _mm256_mul_ps(alpha_v, vy));
+        if (beta != 0.0f) {
+          __m256 z_old =
+            _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
+          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+        }
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+    } else {
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+        __m256 z = _mm256_sub_ps(x, _mm256_mul_ps(alpha_v, y));
+        if (beta != 0.0f) {
+          __m256 z_old =
+            _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
+          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+        }
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+    }
+    for (unsigned int i = N8; i < N; ++i) {
+      float xf = static_cast<float>(X[i]);
+      float yf = static_cast<float>(Y[i * i_stride]);
+      float zf = xf - alpha * yf + ((0.0f == beta) ? 0.0f : beta * static_cast<float>(Z[i]));
+      Z[i] = static_cast<_Float16>(zf);
+    }
+  } else {
+    for (unsigned int i = 0; i < N; ++i) {
+      float xf = static_cast<float>(*X);
+      float yf = static_cast<float>(*Y);
+      float zf =
+        xf - alpha * yf +
+        ((0.0f == beta) ? 0.0f : beta * static_cast<float>(*Z));
+      *Z = static_cast<_Float16>(zf);
+      X += o_stride;
+      Y += i_stride;
+      Z += o_stride;
+    }
+  }
+}
+
+void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
+             _Float16 *Z, float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
+    unsigned int N8 = (N & ~7u);
+    if (i_stride == 0) {
+      __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 z = _mm256_div_ps(x, vy);
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+      for (unsigned int i = N8; i < N; ++i) {
+        Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) /
+                                     static_cast<float>(Y[0]));
+      }
+    } else if (i_stride == 1) {
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+        __m256 z = _mm256_div_ps(x, y);
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+      for (unsigned int i = N8; i < N; ++i) {
+        Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) /
+                                     static_cast<float>(Y[i]));
+      }
+    } else {
+      for (unsigned int i = 0; i < N; ++i) {
+        Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) /
+                                     static_cast<float>(Y[i * i_stride]));
+      }
+    }
+  } else if (o_stride == 1 && (i_stride == 0 || i_stride == 1)) {
+    unsigned int N8 = (N & ~7u);
+    __m256 alpha_v = _mm256_set1_ps(alpha);
+    __m256 beta_v = _mm256_set1_ps(beta);
+
+    if (i_stride == 0) {
+      __m256 denom = _mm256_mul_ps(alpha_v, _mm256_set1_ps(static_cast<float>(Y[0])));
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 z = _mm256_div_ps(x, denom);
+        if (beta != 0.0f) {
+          __m256 z_old =
+            _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
+          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+        }
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+    } else {
+      for (unsigned int i = 0; i < N8; i += 8) {
+        __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+        __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+        __m256 denom = _mm256_mul_ps(alpha_v, y);
+        __m256 z = _mm256_div_ps(x, denom);
+        if (beta != 0.0f) {
+          __m256 z_old =
+            _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
+          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+        }
+        _mm_storeu_si128((__m128i *)(Z + i),
+                         _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
+      }
+    }
+    for (unsigned int i = N8; i < N; ++i) {
+      float xf = static_cast<float>(X[i]);
+      float yf = static_cast<float>(Y[i * i_stride]);
+      float zf = xf / (alpha * yf) + ((0.0f == beta) ? 0.0f : beta * static_cast<float>(Z[i]));
+      Z[i] = static_cast<_Float16>(zf);
+    }
+  } else {
+    for (unsigned int i = 0; i < N; ++i) {
+      float xf = static_cast<float>(*X);
+      float yf = static_cast<float>(*Y);
+      float zf = xf / (alpha * yf) +
+                 ((0.0f == beta) ? 0.0f : beta * static_cast<float>(*Z));
+      *Z = static_cast<_Float16>(zf);
+      X += o_stride;
+      Y += i_stride;
+      Z += o_stride;
+    }
+  }
+}
+
+// ============================================================
+// FP16 BLAS-like operations
+// ============================================================
+
+void saxpy(const unsigned int N, const float alpha, const _Float16 *X,
+           const unsigned int incX, _Float16 *Y, const unsigned int incY) {
+  if (incX == 1 && incY == 1) {
+    unsigned int N8 = (N & ~7u);
+    __m256 alpha_v = _mm256_set1_ps(alpha);
+    for (unsigned int i = 0; i < N8; i += 8) {
+      __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+      __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+      __m256 result = _mm256_fmadd_ps(alpha_v, x, y);
+      _mm_storeu_si128((__m128i *)(Y + i),
+                       _mm256_cvtps_ph(result, _MM_FROUND_TO_NEAREST_INT));
+    }
+    for (unsigned int i = N8; i < N; ++i) {
+      Y[i] = static_cast<_Float16>(static_cast<float>(Y[i]) +
+                                   alpha * static_cast<float>(X[i]));
+    }
+  } else {
+    for (unsigned int i = 0; i < N; ++i) {
+      Y[i * incY] = static_cast<_Float16>(
+        static_cast<float>(Y[i * incY]) +
+        alpha * static_cast<float>(X[i * incX]));
+    }
+  }
+}
+
+_Float16 sdot(const unsigned int N, const _Float16 *X, const unsigned int incX,
+              const _Float16 *Y, const unsigned int incY) {
+  assert(incX > 0 && incY > 0);
+  if (incX == 1 && incY == 1) {
+    unsigned int N8 = (N & ~7u);
+    __m256 acc = _mm256_setzero_ps();
+    for (unsigned int i = 0; i < N8; i += 8) {
+      __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+      __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+      acc = _mm256_fmadd_ps(x, y, acc);
+    }
+    float sum = hsum_avx(acc);
+    for (unsigned int i = N8; i < N; ++i) {
+      sum += static_cast<float>(X[i]) * static_cast<float>(Y[i]);
+    }
+    return static_cast<_Float16>(sum);
+  } else {
+    float sum = 0.0f;
+    for (unsigned int i = 0; i < N; ++i) {
+      sum += static_cast<float>(X[i * incX]) * static_cast<float>(Y[i * incY]);
+    }
+    return static_cast<_Float16>(sum);
+  }
+}
+
+_Float16 snrm2(const unsigned int N, const _Float16 *X,
+               const unsigned int incX) {
+  if (incX == 1) {
+    unsigned int N8 = (N & ~7u);
+    __m256 acc = _mm256_setzero_ps();
+    for (unsigned int i = 0; i < N8; i += 8) {
+      __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+      acc = _mm256_fmadd_ps(x, x, acc);
+    }
+    float sum = hsum_avx(acc);
+    for (unsigned int i = N8; i < N; ++i) {
+      float xf = static_cast<float>(X[i]);
+      sum += xf * xf;
+    }
+    return static_cast<_Float16>(std::sqrt(sum));
+  } else {
+    float sum = 0.0f;
+    for (unsigned int i = 0; i < N; ++i) {
+      float xf = static_cast<float>(X[i * incX]);
+      sum += xf * xf;
+    }
+    return static_cast<_Float16>(std::sqrt(sum));
+  }
+}
+
+void sscal(const unsigned int N, const float alpha, _Float16 *X,
+           const unsigned int incX) {
+  if (incX == 1) {
+    unsigned int N8 = (N & ~7u);
+    __m256 alpha_v = _mm256_set1_ps(alpha);
+    for (unsigned int i = 0; i < N8; i += 8) {
+      __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+      __m256 result = _mm256_mul_ps(alpha_v, x);
+      _mm_storeu_si128((__m128i *)(X + i),
+                       _mm256_cvtps_ph(result, _MM_FROUND_TO_NEAREST_INT));
+    }
+    for (unsigned int i = N8; i < N; ++i) {
+      X[i] = static_cast<_Float16>(alpha * static_cast<float>(X[i]));
+    }
+  } else {
+    for (unsigned int i = 0; i < N; ++i) {
+      X[i * incX] = static_cast<_Float16>(alpha * static_cast<float>(X[i * incX]));
+    }
+  }
+}
+
+void custom_scopy(const unsigned int N, const _Float16 *X,
+                  const unsigned int incX, _Float16 *Y,
+                  const unsigned int incY) {
+  if (incX == 1 && incY == 1) {
+    unsigned int i = 0;
+    unsigned int N16 = (N & ~15u);
+    for (; i < N16; i += 16) {
+      __m256i data =
+        _mm256_loadu_si256((const __m256i *)(X + i));
+      _mm256_storeu_si256((__m256i *)(Y + i), data);
+    }
+    for (; i < N; ++i) {
+      Y[i] = X[i];
+    }
+  } else {
+    for (unsigned int i = 0; i < N; ++i) {
+      Y[i * incY] = X[i * incX];
+    }
+  }
+}
+
+// ============================================================
+// FP16 activation/norm functions
+// ============================================================
+
+_Float16 max_val(const unsigned int N, _Float16 *X) {
+  unsigned int i = 0;
+  __m256 vmax = _mm256_set1_ps(-std::numeric_limits<float>::infinity());
+
+  unsigned int N8 = (N & ~7u);
+  for (; i < N8; i += 8) {
+    __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+    vmax = _mm256_max_ps(vmax, x);
+  }
+
+  // Horizontal max reduction
+  __m128 hi = _mm256_extractf128_ps(vmax, 1);
+  __m128 lo = _mm256_castps256_ps128(vmax);
+  lo = _mm_max_ps(lo, hi);
+  __m128 shuf = _mm_movehl_ps(lo, lo);
+  lo = _mm_max_ps(lo, shuf);
+  shuf = _mm_movehdup_ps(lo);
+  lo = _mm_max_ss(lo, shuf);
+  float result = _mm_cvtss_f32(lo);
+
+  for (; i < N; ++i) {
+    result = std::max(result, static_cast<float>(X[i]));
+  }
+  return static_cast<_Float16>(result);
+}
+
+void softmax(const unsigned int N, _Float16 *X, _Float16 *Y) {
+  // Step 1: find max
+  float max_x = static_cast<float>(max_val(N, X));
+  __m256 vmax = _mm256_set1_ps(max_x);
+
+  // Step 2: exp(x - max) and accumulate sum
+  unsigned int i = 0;
+  unsigned int N8 = (N & ~7u);
+  __m256 vsum = _mm256_setzero_ps();
+
+  for (; i < N8; i += 8) {
+    __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+    __m256 e = exp256_ps(_mm256_sub_ps(x, vmax));
+    _mm_storeu_si128((__m128i *)(Y + i),
+                     _mm256_cvtps_ph(e, _MM_FROUND_TO_NEAREST_INT));
+    vsum = _mm256_add_ps(vsum, e);
+  }
+
+  float sum = hsum_avx(vsum);
+  for (; i < N; ++i) {
+    float e = std::exp(static_cast<float>(X[i]) - max_x);
+    Y[i] = static_cast<_Float16>(e);
+    sum += e;
+  }
+
+  // Step 3: normalize
+  float inv_sum = 1.0f / sum;
+  __m256 vinv = _mm256_set1_ps(inv_sum);
+
+  i = 0;
+  for (; i < N8; i += 8) {
+    __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+    __m256 result = _mm256_mul_ps(y, vinv);
+    _mm_storeu_si128((__m128i *)(Y + i),
+                     _mm256_cvtps_ph(result, _MM_FROUND_TO_NEAREST_INT));
+  }
+  for (; i < N; ++i) {
+    Y[i] = static_cast<_Float16>(static_cast<float>(Y[i]) * inv_sum);
+  }
+}
+
+void inv_sqrt_inplace(const unsigned int N, _Float16 *X) {
+  unsigned int i = 0;
+  const __m256 zero = _mm256_setzero_ps();
+  const __m256 inf_val = _mm256_set1_ps(INFINITY);
+  const __m256 three = _mm256_set1_ps(3.0f);
+  const __m256 half = _mm256_set1_ps(0.5f);
+
+  unsigned int N8 = (N & ~7u);
+  for (; i < N8; i += 8) {
+    __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+    __m256 is_zero = _mm256_cmp_ps(x, zero, _CMP_EQ_OQ);
+    __m256 est = _mm256_rsqrt_ps(x);
+    // Newton-Raphson: y = 0.5 * y * (3 - x * y * y)
+    __m256 xy2 = _mm256_mul_ps(x, _mm256_mul_ps(est, est));
+    __m256 refined =
+      _mm256_mul_ps(_mm256_mul_ps(half, est), _mm256_sub_ps(three, xy2));
+    refined = _mm256_blendv_ps(refined, inf_val, is_zero);
+    _mm_storeu_si128((__m128i *)(X + i),
+                     _mm256_cvtps_ph(refined, _MM_FROUND_TO_NEAREST_INT));
+  }
+
+  for (; i < N; ++i) {
+    X[i] = static_cast<_Float16>(1.0f / std::sqrt(static_cast<float>(X[i])));
+  }
+}
+
+void swiglu(const unsigned int N, _Float16 *X, _Float16 *Y, _Float16 *Z) {
+  unsigned int i = 0;
+
+  const auto oldcsr = _mm_getcsr();
+  _mm_setcsr(oldcsr | 0x8040); // DAZ | FTZ
+
+  unsigned int N8 = (N & ~7u);
+  // 16-wide blocks
+  for (; i + 16 <= N; i += 16) {
+    __m256 y0 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+    __m256 y1 =
+      _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i + 8)));
+    __m256 z0 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
+    __m256 z1 =
+      _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i + 8)));
+
+    _mm_storeu_si128(
+      (__m128i *)(X + i),
+      _mm256_cvtps_ph(avx2_approx_swiglu(y0, z0), _MM_FROUND_TO_NEAREST_INT));
+    _mm_storeu_si128(
+      (__m128i *)(X + i + 8),
+      _mm256_cvtps_ph(avx2_approx_swiglu(y1, z1), _MM_FROUND_TO_NEAREST_INT));
+  }
+
+  // One 8-wide block if available
+  if (i + 8 <= N) {
+    __m256 y0 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+    __m256 z0 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
+    _mm_storeu_si128(
+      (__m128i *)(X + i),
+      _mm256_cvtps_ph(avx2_approx_swiglu(y0, z0), _MM_FROUND_TO_NEAREST_INT));
+    i += 8;
+  }
+
+  // Scalar remainder
+  for (; i < N; ++i) {
+    float yf = static_cast<float>(Y[i]);
+    float zf = static_cast<float>(Z[i]);
+    X[i] = static_cast<_Float16>(
+      (yf / (1.0f + std::exp(-yf))) * zf);
+  }
+
+  _mm_setcsr(oldcsr);
+}
+
+// ============================================================
+// FP16 rms_norm and rotary embedding
+// ============================================================
+
+void rms_norm_wrt_width_fp16(const _Float16 *__restrict X,
+                             _Float16 *__restrict Y, size_t H, size_t W,
+                             float epsilon) {
+  for (size_t h = 0; h < H; ++h) {
+    const _Float16 *rowX = X + h * W;
+    _Float16 *rowY = Y + h * W;
+
+    size_t i = 0;
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+    __m256 acc2 = _mm256_setzero_ps();
+    __m256 acc3 = _mm256_setzero_ps();
+
+    for (; i + 32 <= W; i += 32) {
+      __m256 x0 =
+        _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(rowX + i)));
+      __m256 x1 =
+        _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(rowX + i + 8)));
+      __m256 x2 =
+        _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(rowX + i + 16)));
+      __m256 x3 =
+        _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(rowX + i + 24)));
+      acc0 = _mm256_fmadd_ps(x0, x0, acc0);
+      acc1 = _mm256_fmadd_ps(x1, x1, acc1);
+      acc2 = _mm256_fmadd_ps(x2, x2, acc2);
+      acc3 = _mm256_fmadd_ps(x3, x3, acc3);
+    }
+    for (; i + 8 <= W; i += 8) {
+      __m256 x =
+        _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(rowX + i)));
+      acc0 = _mm256_fmadd_ps(x, x, acc0);
+    }
+    float sumsq =
+      hsum_avx(acc0) + hsum_avx(acc1) + hsum_avx(acc2) + hsum_avx(acc3);
+    for (; i < W; ++i) {
+      float v = static_cast<float>(rowX[i]);
+      sumsq += v * v;
+    }
+
+    float mean = sumsq / static_cast<float>(W);
+    float scale = 1.0f / std::sqrt(mean + epsilon);
+    __m256 vscale = _mm256_set1_ps(scale);
+
+    i = 0;
+    for (; i + 32 <= W; i += 32) {
+      __m256 x0 =
+        _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(rowX + i)));
+      __m256 x1 =
+        _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(rowX + i + 8)));
+      __m256 x2 =
+        _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(rowX + i + 16)));
+      __m256 x3 =
+        _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(rowX + i + 24)));
+      _mm_storeu_si128(
+        (__m128i *)(rowY + i),
+        _mm256_cvtps_ph(_mm256_mul_ps(x0, vscale), _MM_FROUND_TO_NEAREST_INT));
+      _mm_storeu_si128((__m128i *)(rowY + i + 8),
+                       _mm256_cvtps_ph(_mm256_mul_ps(x1, vscale),
+                                       _MM_FROUND_TO_NEAREST_INT));
+      _mm_storeu_si128((__m128i *)(rowY + i + 16),
+                       _mm256_cvtps_ph(_mm256_mul_ps(x2, vscale),
+                                       _MM_FROUND_TO_NEAREST_INT));
+      _mm_storeu_si128((__m128i *)(rowY + i + 24),
+                       _mm256_cvtps_ph(_mm256_mul_ps(x3, vscale),
+                                       _MM_FROUND_TO_NEAREST_INT));
+    }
+    for (; i + 8 <= W; i += 8) {
+      __m256 x =
+        _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(rowX + i)));
+      _mm_storeu_si128(
+        (__m128i *)(rowY + i),
+        _mm256_cvtps_ph(_mm256_mul_ps(x, vscale), _MM_FROUND_TO_NEAREST_INT));
+    }
+    for (; i < W; ++i) {
+      rowY[i] = static_cast<_Float16>(static_cast<float>(rowX[i]) * scale);
+    }
+  }
+}
+
+void compute_rotary_embedding_value(unsigned int dim, unsigned int half_,
+                                    unsigned int w, _Float16 *in, _Float16 *out,
+                                    float *cos_, float *sin_) {
+  unsigned int k = 0;
+  for (; k + 7 < half_; k += 8) {
+    unsigned int i0 = w + k;
+    unsigned int i1 = w + k + half_;
+
+    __m256 a = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(in + i0)));
+    __m256 b = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(in + i1)));
+    __m256 cos_v = _mm256_loadu_ps(&cos_[k]);
+    __m256 sin_v = _mm256_loadu_ps(&sin_[k]);
+
+    __m256 out0 =
+      _mm256_sub_ps(_mm256_mul_ps(a, cos_v), _mm256_mul_ps(b, sin_v));
+    __m256 out1 =
+      _mm256_add_ps(_mm256_mul_ps(a, sin_v), _mm256_mul_ps(b, cos_v));
+
+    _mm_storeu_si128(
+      (__m128i *)(out + i0),
+      _mm256_cvtps_ph(out0, _MM_FROUND_TO_NEAREST_INT));
+    _mm_storeu_si128(
+      (__m128i *)(out + i1),
+      _mm256_cvtps_ph(out1, _MM_FROUND_TO_NEAREST_INT));
+  }
+
+  for (; k < dim; ++k) {
+    unsigned int span = w + k;
+    float value = static_cast<float>(in[span]);
+    float transformed_value;
+    if (k < half_) {
+      transformed_value = -1.0f * static_cast<float>(in[w + k + half_]);
+    } else {
+      transformed_value = static_cast<float>(in[w + k - half_]);
+    }
+    out[span] =
+      static_cast<_Float16>(value * cos_[k] + transformed_value * sin_[k]);
+  }
+}
+
+// ============================================================
+// FP16 Group B functions
+// ============================================================
+
+unsigned int isamax(const unsigned int N, const _Float16 *X,
+                    const unsigned int incX) {
+  if (incX == 1 && N >= 8) {
+    unsigned int N8 = (N & ~7u);
+    __m256 sign_mask = _mm256_set1_ps(-0.0f);
+    __m256 vmax = _mm256_setzero_ps();
+    unsigned int max_idx = 0;
+    float max_abs = 0.0f;
+
+    for (unsigned int i = 0; i < N8; i += 8) {
+      __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+      __m256 abs_x = _mm256_andnot_ps(sign_mask, x);
+      // Check each element individually for max tracking
+      alignas(32) float buf[8];
+      _mm256_storeu_ps(buf, abs_x);
+      for (int j = 0; j < 8; ++j) {
+        if (buf[j] > max_abs) {
+          max_abs = buf[j];
+          max_idx = i + j;
+        }
+      }
+    }
+    for (unsigned int i = N8; i < N; ++i) {
+      float cur = std::abs(static_cast<float>(X[i]));
+      if (cur > max_abs) {
+        max_abs = cur;
+        max_idx = i;
+      }
+    }
+    return max_idx;
+  } else {
+    unsigned int max_idx = 0;
+    float max_val = 0.0f;
+    for (unsigned int n = 0; n < N; n += incX) {
+      float cur = std::abs(static_cast<float>(X[n]));
+      if (cur > max_val) {
+        max_val = cur;
+        max_idx = n;
+      }
+    }
+    return max_idx;
+  }
+}
+
+void transpose_matrix(const unsigned int M, const unsigned int N,
+                      const _Float16 *src, unsigned int ld_src, _Float16 *dst,
+                      unsigned int ld_dst) {
+  for (unsigned int i = 0; i < M; i++) {
+    for (unsigned int j = 0; j < N; j++) {
+      dst[i + j * ld_dst] = src[i * ld_src + j];
+    }
+  }
+}
+
+void scopy_int4_to_float16(const unsigned int N, const uint8_t *X,
+                           const unsigned int incX, _Float16 *Y,
+                           const unsigned int incY) {
+  if (incX == 1 && incY == 1) {
+    unsigned int i = 0;
+    unsigned int N8 = (N & ~7u);
+    for (; i < N8; i += 8) {
+      alignas(32) float buf[16];
+      for (int j = 0; j < 8; ++j) {
+        buf[2 * j] = static_cast<float>(X[i + j] >> 4);
+        buf[2 * j + 1] = static_cast<float>(X[i + j] & 0x0f);
+      }
+      __m256 v0 = _mm256_loadu_ps(buf);
+      __m256 v1 = _mm256_loadu_ps(buf + 8);
+      _mm_storeu_si128((__m128i *)(Y + 2 * i),
+                       _mm256_cvtps_ph(v0, _MM_FROUND_TO_NEAREST_INT));
+      _mm_storeu_si128((__m128i *)(Y + 2 * i + 8),
+                       _mm256_cvtps_ph(v1, _MM_FROUND_TO_NEAREST_INT));
+    }
+    for (; i < N; ++i) {
+      Y[2 * i] = static_cast<_Float16>(X[i] >> 4);
+      Y[2 * i + 1] = static_cast<_Float16>(X[i] & 0x0f);
+    }
+  } else {
+    for (unsigned int idx = 0; idx < N; idx++) {
+      Y[2 * idx] = static_cast<_Float16>(X[idx] >> 4);
+      Y[2 * idx + 1] = static_cast<_Float16>(X[idx] & 0x0f);
+    }
+  }
+}
+
+void scopy_int8_to_float16(const unsigned int N, const uint8_t *X,
+                           const unsigned int incX, _Float16 *Y,
+                           const unsigned int incY) {
+  if (incX == 1 && incY == 1) {
+    unsigned int i = 0;
+    unsigned int N8 = (N & ~7u);
+    for (; i < N8; i += 8) {
+      __m256i xi = _mm256_cvtepu8_epi32(_mm_loadl_epi64((const __m128i *)(X + i)));
+      __m256 xf = _mm256_cvtepi32_ps(xi);
+      _mm_storeu_si128((__m128i *)(Y + i),
+                       _mm256_cvtps_ph(xf, _MM_FROUND_TO_NEAREST_INT));
+    }
+    for (; i < N; ++i) {
+      Y[i] = static_cast<_Float16>(X[i]);
+    }
+  } else {
+    for (unsigned int idx = 0; idx < N; idx++) {
+      Y[idx * incY] = static_cast<_Float16>(X[idx * incX]);
+    }
+  }
+}
+
+void scopy_int8_to_float16(const unsigned int N, const int8_t *X,
+                           const unsigned int incX, _Float16 *Y,
+                           const unsigned int incY) {
+  if (incX == 1 && incY == 1) {
+    unsigned int i = 0;
+    unsigned int N8 = (N & ~7u);
+    for (; i < N8; i += 8) {
+      __m256i xi = _mm256_cvtepi8_epi32(_mm_loadl_epi64((const __m128i *)(X + i)));
+      __m256 xf = _mm256_cvtepi32_ps(xi);
+      _mm_storeu_si128((__m128i *)(Y + i),
+                       _mm256_cvtps_ph(xf, _MM_FROUND_TO_NEAREST_INT));
+    }
+    for (; i < N; ++i) {
+      Y[i] = static_cast<_Float16>(X[i]);
+    }
+  } else {
+    for (unsigned int idx = 0; idx < N; idx++) {
+      Y[idx * incY] = static_cast<_Float16>(X[idx * incX]);
+    }
+  }
 }
 
 } // namespace nntrainer::avx2
