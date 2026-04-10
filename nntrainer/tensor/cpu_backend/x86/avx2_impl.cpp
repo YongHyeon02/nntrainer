@@ -1271,16 +1271,20 @@ void softmax(const unsigned int N, float *X, float *Y) {
 
 void inv_sqrt_inplace(const unsigned int N, float *X) {
   unsigned int i = 0;
+  const __m256 zero = _mm256_setzero_ps();
+  const __m256 inf_val = _mm256_set1_ps(INFINITY);
   const __m256 three = _mm256_set1_ps(3.0f);
   const __m256 half = _mm256_set1_ps(0.5f);
 
   for (; i + 8 <= N; i += 8) {
     __m256 x = _mm256_loadu_ps(&X[i]);
+    __m256 is_zero = _mm256_cmp_ps(x, zero, _CMP_EQ_OQ);
     __m256 est = _mm256_rsqrt_ps(x);
     // Newton-Raphson: y = 0.5 * y * (3 - x * y * y)
     __m256 xy2 = _mm256_mul_ps(x, _mm256_mul_ps(est, est));
     __m256 refined = _mm256_mul_ps(
       _mm256_mul_ps(half, est), _mm256_sub_ps(three, xy2));
+    refined = _mm256_blendv_ps(refined, inf_val, is_zero);
     _mm256_storeu_ps(&X[i], refined);
   }
 
@@ -1555,32 +1559,42 @@ void ele_sub(const unsigned int N, const float *X, const float *Y, float *Z,
   if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
     unsigned int N8 = (N & ~(7));
     if (i_stride == 0) {
-      float vy8[8] = {Y[0], Y[0], Y[0], Y[0], Y[0], Y[0], Y[0], Y[0]};
-      auto y = _mm256_loadu_ps(&vy8[0]);
+      auto y = _mm256_set1_ps(Y[0]);
       for (unsigned int i = 0; i < N8; i += 8) {
         auto x = _mm256_loadu_ps(X);
         auto z = _mm256_sub_ps(x, y);
         _mm256_storeu_ps(Z, z);
         X += 8;
-        Y += i_stride * 8;
         Z += 8;
       }
-    } else {
+      for (unsigned int i = N8; i < N; ++i) {
+        *Z = *X - Y[0];
+        X++;
+        Z++;
+      }
+    } else if (i_stride == 1) {
       for (unsigned int i = 0; i < N8; i += 8) {
         auto x = _mm256_loadu_ps(X);
         auto y = _mm256_loadu_ps(Y);
         auto z = _mm256_sub_ps(x, y);
         _mm256_storeu_ps(Z, z);
         X += 8;
-        Y += i_stride * 8;
+        Y += 8;
         Z += 8;
       }
-    }
-    for (unsigned int i = N8; i < N; ++i) {
-      *Z = *X - *Y;
-      X++;
-      Y += i_stride;
-      Z++;
+      for (unsigned int i = N8; i < N; ++i) {
+        *Z = *X - *Y;
+        X++;
+        Y++;
+        Z++;
+      }
+    } else {
+      for (unsigned int i = 0; i < N; ++i) {
+        *Z = *X - *Y;
+        X++;
+        Y += i_stride;
+        Z++;
+      }
     }
   } else {
     if (o_stride == 1 && (i_stride == 0 || i_stride == 1)) {
@@ -1640,32 +1654,42 @@ void ele_div(const unsigned int N, const float *X, const float *Y, float *Z,
   if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
     unsigned int N8 = (N & ~(7));
     if (i_stride == 0) {
-      float vy8[8] = {Y[0], Y[0], Y[0], Y[0], Y[0], Y[0], Y[0], Y[0]};
-      auto y = _mm256_loadu_ps(&vy8[0]);
+      auto y = _mm256_set1_ps(Y[0]);
       for (unsigned int i = 0; i < N8; i += 8) {
         auto x = _mm256_loadu_ps(X);
         auto z = _mm256_div_ps(x, y);
         _mm256_storeu_ps(Z, z);
         X += 8;
-        Y += i_stride * 8;
         Z += 8;
       }
-    } else {
+      for (unsigned int i = N8; i < N; ++i) {
+        *Z = *X / Y[0];
+        X++;
+        Z++;
+      }
+    } else if (i_stride == 1) {
       for (unsigned int i = 0; i < N8; i += 8) {
         auto x = _mm256_loadu_ps(X);
         auto y = _mm256_loadu_ps(Y);
         auto z = _mm256_div_ps(x, y);
         _mm256_storeu_ps(Z, z);
         X += 8;
-        Y += i_stride * 8;
+        Y += 8;
         Z += 8;
       }
-    }
-    for (unsigned int i = N8; i < N; ++i) {
-      *Z = *X / *Y;
-      X++;
-      Y += i_stride;
-      Z++;
+      for (unsigned int i = N8; i < N; ++i) {
+        *Z = *X / *Y;
+        X++;
+        Y++;
+        Z++;
+      }
+    } else {
+      for (unsigned int i = 0; i < N; ++i) {
+        *Z = *X / *Y;
+        X++;
+        Y += i_stride;
+        Z++;
+      }
     }
   } else {
     if (o_stride == 1 && (i_stride == 0 || i_stride == 1)) {
