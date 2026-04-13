@@ -809,16 +809,47 @@ void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
 void saxpy(const unsigned int N, const float alpha, const _Float16 *X,
            const unsigned int incX, _Float16 *Y, const unsigned int incY) {
   if (incX == 1 && incY == 1) {
-    unsigned int N8 = (N & ~7u);
+    unsigned int i = 0;
+    unsigned int N16 = (N & ~15u);
     __m256 alpha_v = _mm256_set1_ps(alpha);
-    for (unsigned int i = 0; i < N8; i += 8) {
+
+    // Main loop: process 16 elements per iteration via 256-bit loads
+    for (; i < N16; i += 16) {
+      __m256i x_raw = _mm256_loadu_si256((const __m256i *)(X + i));
+      __m256i y_raw = _mm256_loadu_si256((const __m256i *)(Y + i));
+
+      __m128i x_lo = _mm256_castsi256_si128(x_raw);
+      __m128i x_hi = _mm256_extracti128_si256(x_raw, 1);
+      __m128i y_lo = _mm256_castsi256_si128(y_raw);
+      __m128i y_hi = _mm256_extracti128_si256(y_raw, 1);
+
+      __m256 xf0 = _mm256_cvtph_ps(x_lo);
+      __m256 xf1 = _mm256_cvtph_ps(x_hi);
+      __m256 yf0 = _mm256_cvtph_ps(y_lo);
+      __m256 yf1 = _mm256_cvtph_ps(y_hi);
+
+      __m256 r0 = _mm256_fmadd_ps(alpha_v, xf0, yf0);
+      __m256 r1 = _mm256_fmadd_ps(alpha_v, xf1, yf1);
+
+      __m128i out_lo = _mm256_cvtps_ph(r0, _MM_FROUND_TO_NEAREST_INT);
+      __m128i out_hi = _mm256_cvtps_ph(r1, _MM_FROUND_TO_NEAREST_INT);
+      __m256i out = _mm256_inserti128_si256(_mm256_castsi128_si256(out_lo),
+                                           out_hi, 1);
+      _mm256_storeu_si256((__m256i *)(Y + i), out);
+    }
+
+    // Tail: process remaining 8 elements
+    if (i + 8 <= N) {
       __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
       __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
       __m256 result = _mm256_fmadd_ps(alpha_v, x, y);
       _mm_storeu_si128((__m128i *)(Y + i),
                        _mm256_cvtps_ph(result, _MM_FROUND_TO_NEAREST_INT));
+      i += 8;
     }
-    for (unsigned int i = N8; i < N; ++i) {
+
+    // Scalar tail
+    for (; i < N; ++i) {
       Y[i] = static_cast<_Float16>(static_cast<float>(Y[i]) +
                                    alpha * static_cast<float>(X[i]));
     }
@@ -835,15 +866,40 @@ _Float16 sdot(const unsigned int N, const _Float16 *X, const unsigned int incX,
               const _Float16 *Y, const unsigned int incY) {
   assert(incX > 0 && incY > 0);
   if (incX == 1 && incY == 1) {
-    unsigned int N8 = (N & ~7u);
-    __m256 acc = _mm256_setzero_ps();
-    for (unsigned int i = 0; i < N8; i += 8) {
+    unsigned int i = 0;
+    unsigned int N16 = (N & ~15u);
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+
+    // Main loop: 16 elements with dual accumulators to break dependency
+    for (; i < N16; i += 16) {
+      __m256i x_raw = _mm256_loadu_si256((const __m256i *)(X + i));
+      __m256i y_raw = _mm256_loadu_si256((const __m256i *)(Y + i));
+
+      __m256 xf0 = _mm256_cvtph_ps(_mm256_castsi256_si128(x_raw));
+      __m256 xf1 = _mm256_cvtph_ps(_mm256_extracti128_si256(x_raw, 1));
+      __m256 yf0 = _mm256_cvtph_ps(_mm256_castsi256_si128(y_raw));
+      __m256 yf1 = _mm256_cvtph_ps(_mm256_extracti128_si256(y_raw, 1));
+
+      acc0 = _mm256_fmadd_ps(xf0, yf0, acc0);
+      acc1 = _mm256_fmadd_ps(xf1, yf1, acc1);
+    }
+
+    // Merge accumulators and reduce
+    __m256 acc = _mm256_add_ps(acc0, acc1);
+
+    // Tail: process remaining 8 elements
+    if (i + 8 <= N) {
       __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
       __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
       acc = _mm256_fmadd_ps(x, y, acc);
+      i += 8;
     }
+
     float sum = hsum_avx(acc);
-    for (unsigned int i = N8; i < N; ++i) {
+
+    // Scalar tail
+    for (; i < N; ++i) {
       sum += static_cast<float>(X[i]) * static_cast<float>(Y[i]);
     }
     return static_cast<_Float16>(sum);
@@ -859,14 +915,36 @@ _Float16 sdot(const unsigned int N, const _Float16 *X, const unsigned int incX,
 _Float16 snrm2(const unsigned int N, const _Float16 *X,
                const unsigned int incX) {
   if (incX == 1) {
-    unsigned int N8 = (N & ~7u);
-    __m256 acc = _mm256_setzero_ps();
-    for (unsigned int i = 0; i < N8; i += 8) {
+    unsigned int i = 0;
+    unsigned int N16 = (N & ~15u);
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+
+    // Main loop: 16 elements with dual accumulators
+    for (; i < N16; i += 16) {
+      __m256i x_raw = _mm256_loadu_si256((const __m256i *)(X + i));
+
+      __m256 xf0 = _mm256_cvtph_ps(_mm256_castsi256_si128(x_raw));
+      __m256 xf1 = _mm256_cvtph_ps(_mm256_extracti128_si256(x_raw, 1));
+
+      acc0 = _mm256_fmadd_ps(xf0, xf0, acc0);
+      acc1 = _mm256_fmadd_ps(xf1, xf1, acc1);
+    }
+
+    // Merge accumulators
+    __m256 acc = _mm256_add_ps(acc0, acc1);
+
+    // Tail: process remaining 8 elements
+    if (i + 8 <= N) {
       __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
       acc = _mm256_fmadd_ps(x, x, acc);
+      i += 8;
     }
+
     float sum = hsum_avx(acc);
-    for (unsigned int i = N8; i < N; ++i) {
+
+    // Scalar tail
+    for (; i < N; ++i) {
       float xf = static_cast<float>(X[i]);
       sum += xf * xf;
     }
@@ -884,15 +962,41 @@ _Float16 snrm2(const unsigned int N, const _Float16 *X,
 void sscal(const unsigned int N, const float alpha, _Float16 *X,
            const unsigned int incX) {
   if (incX == 1) {
-    unsigned int N8 = (N & ~7u);
+    unsigned int i = 0;
+    unsigned int N16 = (N & ~15u);
     __m256 alpha_v = _mm256_set1_ps(alpha);
-    for (unsigned int i = 0; i < N8; i += 8) {
+
+    // Main loop: process 16 elements per iteration via 256-bit loads
+    for (; i < N16; i += 16) {
+      __m256i x_raw = _mm256_loadu_si256((const __m256i *)(X + i));
+
+      __m128i x_lo = _mm256_castsi256_si128(x_raw);
+      __m128i x_hi = _mm256_extracti128_si256(x_raw, 1);
+
+      __m256 xf0 = _mm256_cvtph_ps(x_lo);
+      __m256 xf1 = _mm256_cvtph_ps(x_hi);
+
+      __m256 r0 = _mm256_mul_ps(alpha_v, xf0);
+      __m256 r1 = _mm256_mul_ps(alpha_v, xf1);
+
+      __m128i out_lo = _mm256_cvtps_ph(r0, _MM_FROUND_TO_NEAREST_INT);
+      __m128i out_hi = _mm256_cvtps_ph(r1, _MM_FROUND_TO_NEAREST_INT);
+      __m256i out = _mm256_inserti128_si256(_mm256_castsi128_si256(out_lo),
+                                           out_hi, 1);
+      _mm256_storeu_si256((__m256i *)(X + i), out);
+    }
+
+    // Tail: process remaining 8 elements
+    if (i + 8 <= N) {
       __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
       __m256 result = _mm256_mul_ps(alpha_v, x);
       _mm_storeu_si128((__m128i *)(X + i),
                        _mm256_cvtps_ph(result, _MM_FROUND_TO_NEAREST_INT));
+      i += 8;
     }
-    for (unsigned int i = N8; i < N; ++i) {
+
+    // Scalar tail
+    for (; i < N; ++i) {
       X[i] = static_cast<_Float16>(alpha * static_cast<float>(X[i]));
     }
   } else {
@@ -1161,10 +1265,9 @@ void compute_rotary_embedding_value(unsigned int dim, unsigned int half_,
     __m256 cos_v = _mm256_loadu_ps(&cos_[k]);
     __m256 sin_v = _mm256_loadu_ps(&sin_[k]);
 
-    __m256 out0 =
-      _mm256_sub_ps(_mm256_mul_ps(a, cos_v), _mm256_mul_ps(b, sin_v));
-    __m256 out1 =
-      _mm256_add_ps(_mm256_mul_ps(a, sin_v), _mm256_mul_ps(b, cos_v));
+    // FMA: out0 = a*cos - b*sin, out1 = a*sin + b*cos
+    __m256 out0 = _mm256_fmsub_ps(a, cos_v, _mm256_mul_ps(b, sin_v));
+    __m256 out1 = _mm256_fmadd_ps(a, sin_v, _mm256_mul_ps(b, cos_v));
 
     _mm_storeu_si128(
       (__m128i *)(out + i0),
