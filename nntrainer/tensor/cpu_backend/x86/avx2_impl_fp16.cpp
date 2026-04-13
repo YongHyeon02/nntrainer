@@ -939,7 +939,6 @@ unsigned int isamax(const unsigned int N, const _Float16 *X,
   if (incX == 1 && N >= 8) {
     unsigned int N8 = (N & ~7u);
     __m256 sign_mask = _mm256_set1_ps(-0.0f);
-    __m256 vmax = _mm256_setzero_ps();
     unsigned int max_idx = 0;
     float max_abs = 0.0f;
 
