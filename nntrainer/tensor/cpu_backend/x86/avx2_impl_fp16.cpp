@@ -197,28 +197,53 @@ void ele_mul(const unsigned int N, const _Float16 *X, const _Float16 *Y,
              _Float16 *Z, float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
   if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
-    unsigned int N8 = (N & ~7u);
+    unsigned int i = 0;
     if (i_stride == 0) {
       float y0_f32 = static_cast<float>(Y[0]);
       __m256 vy = _mm256_set1_ps(y0_f32);
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 z_lo = _mm256_mul_ps(x_lo, vy);
+        __m256 z_hi = _mm256_mul_ps(x_hi, vy);
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 z = _mm256_mul_ps(x, vy);
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
-      for (unsigned int i = N8; i < N; ++i) {
+      for (; i < N; ++i) {
         Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) * y0_f32);
       }
     } else if (i_stride == 1) {
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256i yd = _mm256_loadu_si256((const __m256i *)(Y + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 y_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(yd));
+        __m256 y_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(yd, 1));
+        __m256 z_lo = _mm256_mul_ps(x_lo, y_lo);
+        __m256 z_hi = _mm256_mul_ps(x_hi, y_hi);
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
         __m256 z = _mm256_mul_ps(x, y);
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
-      for (unsigned int i = N8; i < N; ++i) {
+      for (; i < N; ++i) {
         Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) *
                                      static_cast<float>(Y[i]));
       }
@@ -229,38 +254,77 @@ void ele_mul(const unsigned int N, const _Float16 *X, const _Float16 *Y,
       }
     }
   } else if (o_stride == 1 && (i_stride == 0 || i_stride == 1)) {
-    unsigned int N8 = (N & ~7u);
     __m256 alpha_v = _mm256_set1_ps(alpha);
     __m256 beta_v = _mm256_set1_ps(beta);
+    unsigned int i = 0;
 
     if (i_stride == 0) {
       __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 z_lo = _mm256_mul_ps(_mm256_mul_ps(x_lo, vy), alpha_v);
+        __m256 z_hi = _mm256_mul_ps(_mm256_mul_ps(x_hi, vy), alpha_v);
+        if (beta != 0.0f) {
+          __m256i zd = _mm256_loadu_si256((const __m256i *)(Z + i));
+          __m256 zo_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(zd));
+          __m256 zo_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(zd, 1));
+          z_lo = _mm256_fmadd_ps(beta_v, zo_lo, z_lo);
+          z_hi = _mm256_fmadd_ps(beta_v, zo_hi, z_hi);
+        }
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 z = _mm256_mul_ps(_mm256_mul_ps(x, vy), alpha_v);
         if (beta != 0.0f) {
           __m256 z_old =
             _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
-          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+          z = _mm256_fmadd_ps(beta_v, z_old, z);
         }
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
     } else {
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256i yd = _mm256_loadu_si256((const __m256i *)(Y + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 y_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(yd));
+        __m256 y_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(yd, 1));
+        __m256 z_lo = _mm256_mul_ps(_mm256_mul_ps(x_lo, y_lo), alpha_v);
+        __m256 z_hi = _mm256_mul_ps(_mm256_mul_ps(x_hi, y_hi), alpha_v);
+        if (beta != 0.0f) {
+          __m256i zd = _mm256_loadu_si256((const __m256i *)(Z + i));
+          __m256 zo_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(zd));
+          __m256 zo_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(zd, 1));
+          z_lo = _mm256_fmadd_ps(beta_v, zo_lo, z_lo);
+          z_hi = _mm256_fmadd_ps(beta_v, zo_hi, z_hi);
+        }
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
         __m256 z = _mm256_mul_ps(_mm256_mul_ps(x, y), alpha_v);
         if (beta != 0.0f) {
           __m256 z_old =
             _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
-          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+          z = _mm256_fmadd_ps(beta_v, z_old, z);
         }
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
     }
-    for (unsigned int i = N8; i < N; ++i) {
+    for (; i < N; ++i) {
       float xf = static_cast<float>(X[i]);
       float yf = static_cast<float>(Y[i * i_stride]);
       float zf = xf * alpha * yf + ((0.0f == beta) ? 0.0f : beta * static_cast<float>(Z[i]));
@@ -284,28 +348,53 @@ void ele_add(const unsigned int N, const _Float16 *X, const _Float16 *Y,
              _Float16 *Z, float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
   if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
-    unsigned int N8 = (N & ~7u);
+    unsigned int i = 0;
     if (i_stride == 0) {
       __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 z_lo = _mm256_add_ps(x_lo, vy);
+        __m256 z_hi = _mm256_add_ps(x_hi, vy);
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 z = _mm256_add_ps(x, vy);
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
-      for (unsigned int i = N8; i < N; ++i) {
+      for (; i < N; ++i) {
         Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) +
                                      static_cast<float>(Y[0]));
       }
     } else if (i_stride == 1) {
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256i yd = _mm256_loadu_si256((const __m256i *)(Y + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 y_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(yd));
+        __m256 y_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(yd, 1));
+        __m256 z_lo = _mm256_add_ps(x_lo, y_lo);
+        __m256 z_hi = _mm256_add_ps(x_hi, y_hi);
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
         __m256 z = _mm256_add_ps(x, y);
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
-      for (unsigned int i = N8; i < N; ++i) {
+      for (; i < N; ++i) {
         Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) +
                                      static_cast<float>(Y[i]));
       }
@@ -316,38 +405,77 @@ void ele_add(const unsigned int N, const _Float16 *X, const _Float16 *Y,
       }
     }
   } else if (o_stride == 1 && (i_stride == 0 || i_stride == 1)) {
-    unsigned int N8 = (N & ~7u);
     __m256 alpha_v = _mm256_set1_ps(alpha);
     __m256 beta_v = _mm256_set1_ps(beta);
+    unsigned int i = 0;
 
     if (i_stride == 0) {
       __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 z_lo = _mm256_fmadd_ps(alpha_v, vy, x_lo);
+        __m256 z_hi = _mm256_fmadd_ps(alpha_v, vy, x_hi);
+        if (beta != 0.0f) {
+          __m256i zd = _mm256_loadu_si256((const __m256i *)(Z + i));
+          __m256 zo_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(zd));
+          __m256 zo_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(zd, 1));
+          z_lo = _mm256_fmadd_ps(beta_v, zo_lo, z_lo);
+          z_hi = _mm256_fmadd_ps(beta_v, zo_hi, z_hi);
+        }
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
-        __m256 z = _mm256_add_ps(x, _mm256_mul_ps(alpha_v, vy));
+        __m256 z = _mm256_fmadd_ps(alpha_v, vy, x);
         if (beta != 0.0f) {
           __m256 z_old =
             _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
-          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+          z = _mm256_fmadd_ps(beta_v, z_old, z);
         }
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
     } else {
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256i yd = _mm256_loadu_si256((const __m256i *)(Y + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 y_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(yd));
+        __m256 y_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(yd, 1));
+        __m256 z_lo = _mm256_fmadd_ps(alpha_v, y_lo, x_lo);
+        __m256 z_hi = _mm256_fmadd_ps(alpha_v, y_hi, x_hi);
+        if (beta != 0.0f) {
+          __m256i zd = _mm256_loadu_si256((const __m256i *)(Z + i));
+          __m256 zo_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(zd));
+          __m256 zo_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(zd, 1));
+          z_lo = _mm256_fmadd_ps(beta_v, zo_lo, z_lo);
+          z_hi = _mm256_fmadd_ps(beta_v, zo_hi, z_hi);
+        }
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
-        __m256 z = _mm256_add_ps(x, _mm256_mul_ps(alpha_v, y));
+        __m256 z = _mm256_fmadd_ps(alpha_v, y, x);
         if (beta != 0.0f) {
           __m256 z_old =
             _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
-          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+          z = _mm256_fmadd_ps(beta_v, z_old, z);
         }
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
     }
-    for (unsigned int i = N8; i < N; ++i) {
+    for (; i < N; ++i) {
       float xf = static_cast<float>(X[i]);
       float yf = static_cast<float>(Y[i * i_stride]);
       float zf = xf + alpha * yf + ((0.0f == beta) ? 0.0f : beta * static_cast<float>(Z[i]));
@@ -372,28 +500,53 @@ void ele_sub(const unsigned int N, const _Float16 *X, const _Float16 *Y,
              _Float16 *Z, float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
   if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
-    unsigned int N8 = (N & ~7u);
+    unsigned int i = 0;
     if (i_stride == 0) {
       __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 z_lo = _mm256_sub_ps(x_lo, vy);
+        __m256 z_hi = _mm256_sub_ps(x_hi, vy);
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 z = _mm256_sub_ps(x, vy);
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
-      for (unsigned int i = N8; i < N; ++i) {
+      for (; i < N; ++i) {
         Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) -
                                      static_cast<float>(Y[0]));
       }
     } else if (i_stride == 1) {
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256i yd = _mm256_loadu_si256((const __m256i *)(Y + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 y_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(yd));
+        __m256 y_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(yd, 1));
+        __m256 z_lo = _mm256_sub_ps(x_lo, y_lo);
+        __m256 z_hi = _mm256_sub_ps(x_hi, y_hi);
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
         __m256 z = _mm256_sub_ps(x, y);
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
-      for (unsigned int i = N8; i < N; ++i) {
+      for (; i < N; ++i) {
         Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) -
                                      static_cast<float>(Y[i]));
       }
@@ -404,38 +557,77 @@ void ele_sub(const unsigned int N, const _Float16 *X, const _Float16 *Y,
       }
     }
   } else if (o_stride == 1 && (i_stride == 0 || i_stride == 1)) {
-    unsigned int N8 = (N & ~7u);
     __m256 alpha_v = _mm256_set1_ps(alpha);
     __m256 beta_v = _mm256_set1_ps(beta);
+    unsigned int i = 0;
 
     if (i_stride == 0) {
       __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 z_lo = _mm256_fnmadd_ps(alpha_v, vy, x_lo);
+        __m256 z_hi = _mm256_fnmadd_ps(alpha_v, vy, x_hi);
+        if (beta != 0.0f) {
+          __m256i zd = _mm256_loadu_si256((const __m256i *)(Z + i));
+          __m256 zo_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(zd));
+          __m256 zo_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(zd, 1));
+          z_lo = _mm256_fmadd_ps(beta_v, zo_lo, z_lo);
+          z_hi = _mm256_fmadd_ps(beta_v, zo_hi, z_hi);
+        }
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
-        __m256 z = _mm256_sub_ps(x, _mm256_mul_ps(alpha_v, vy));
+        __m256 z = _mm256_fnmadd_ps(alpha_v, vy, x);
         if (beta != 0.0f) {
           __m256 z_old =
             _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
-          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+          z = _mm256_fmadd_ps(beta_v, z_old, z);
         }
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
     } else {
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256i yd = _mm256_loadu_si256((const __m256i *)(Y + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 y_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(yd));
+        __m256 y_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(yd, 1));
+        __m256 z_lo = _mm256_fnmadd_ps(alpha_v, y_lo, x_lo);
+        __m256 z_hi = _mm256_fnmadd_ps(alpha_v, y_hi, x_hi);
+        if (beta != 0.0f) {
+          __m256i zd = _mm256_loadu_si256((const __m256i *)(Z + i));
+          __m256 zo_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(zd));
+          __m256 zo_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(zd, 1));
+          z_lo = _mm256_fmadd_ps(beta_v, zo_lo, z_lo);
+          z_hi = _mm256_fmadd_ps(beta_v, zo_hi, z_hi);
+        }
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
-        __m256 z = _mm256_sub_ps(x, _mm256_mul_ps(alpha_v, y));
+        __m256 z = _mm256_fnmadd_ps(alpha_v, y, x);
         if (beta != 0.0f) {
           __m256 z_old =
             _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
-          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+          z = _mm256_fmadd_ps(beta_v, z_old, z);
         }
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
     }
-    for (unsigned int i = N8; i < N; ++i) {
+    for (; i < N; ++i) {
       float xf = static_cast<float>(X[i]);
       float yf = static_cast<float>(Y[i * i_stride]);
       float zf = xf - alpha * yf + ((0.0f == beta) ? 0.0f : beta * static_cast<float>(Z[i]));
@@ -460,28 +652,53 @@ void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
              _Float16 *Z, float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
   if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
-    unsigned int N8 = (N & ~7u);
+    unsigned int i = 0;
     if (i_stride == 0) {
       __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 z_lo = _mm256_div_ps(x_lo, vy);
+        __m256 z_hi = _mm256_div_ps(x_hi, vy);
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 z = _mm256_div_ps(x, vy);
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
-      for (unsigned int i = N8; i < N; ++i) {
+      for (; i < N; ++i) {
         Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) /
                                      static_cast<float>(Y[0]));
       }
     } else if (i_stride == 1) {
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256i yd = _mm256_loadu_si256((const __m256i *)(Y + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 y_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(yd));
+        __m256 y_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(yd, 1));
+        __m256 z_lo = _mm256_div_ps(x_lo, y_lo);
+        __m256 z_hi = _mm256_div_ps(x_hi, y_hi);
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
         __m256 z = _mm256_div_ps(x, y);
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
-      for (unsigned int i = N8; i < N; ++i) {
+      for (; i < N; ++i) {
         Z[i] = static_cast<_Float16>(static_cast<float>(X[i]) /
                                      static_cast<float>(Y[i]));
       }
@@ -492,25 +709,66 @@ void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
       }
     }
   } else if (o_stride == 1 && (i_stride == 0 || i_stride == 1)) {
-    unsigned int N8 = (N & ~7u);
     __m256 alpha_v = _mm256_set1_ps(alpha);
     __m256 beta_v = _mm256_set1_ps(beta);
+    unsigned int i = 0;
 
     if (i_stride == 0) {
       __m256 denom = _mm256_mul_ps(alpha_v, _mm256_set1_ps(static_cast<float>(Y[0])));
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 z_lo = _mm256_div_ps(x_lo, denom);
+        __m256 z_hi = _mm256_div_ps(x_hi, denom);
+        if (beta != 0.0f) {
+          __m256i zd = _mm256_loadu_si256((const __m256i *)(Z + i));
+          __m256 zo_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(zd));
+          __m256 zo_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(zd, 1));
+          z_lo = _mm256_fmadd_ps(beta_v, zo_lo, z_lo);
+          z_hi = _mm256_fmadd_ps(beta_v, zo_hi, z_hi);
+        }
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 z = _mm256_div_ps(x, denom);
         if (beta != 0.0f) {
           __m256 z_old =
             _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
-          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+          z = _mm256_fmadd_ps(beta_v, z_old, z);
         }
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
     } else {
-      for (unsigned int i = 0; i < N8; i += 8) {
+      for (; i + 16 <= N; i += 16) {
+        __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
+        __m256i yd = _mm256_loadu_si256((const __m256i *)(Y + i));
+        __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
+        __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
+        __m256 y_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(yd));
+        __m256 y_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(yd, 1));
+        __m256 d_lo = _mm256_mul_ps(alpha_v, y_lo);
+        __m256 d_hi = _mm256_mul_ps(alpha_v, y_hi);
+        __m256 z_lo = _mm256_div_ps(x_lo, d_lo);
+        __m256 z_hi = _mm256_div_ps(x_hi, d_hi);
+        if (beta != 0.0f) {
+          __m256i zd = _mm256_loadu_si256((const __m256i *)(Z + i));
+          __m256 zo_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(zd));
+          __m256 zo_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(zd, 1));
+          z_lo = _mm256_fmadd_ps(beta_v, zo_lo, z_lo);
+          z_hi = _mm256_fmadd_ps(beta_v, zo_hi, z_hi);
+        }
+        __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
+        __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
+        _mm256_storeu_si256((__m256i *)(Z + i),
+          _mm256_inserti128_si256(_mm256_castsi128_si256(r_lo), r_hi, 1));
+      }
+      for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
         __m256 denom = _mm256_mul_ps(alpha_v, y);
@@ -518,13 +776,13 @@ void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
         if (beta != 0.0f) {
           __m256 z_old =
             _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
-          z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+          z = _mm256_fmadd_ps(beta_v, z_old, z);
         }
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
     }
-    for (unsigned int i = N8; i < N; ++i) {
+    for (; i < N; ++i) {
       float xf = static_cast<float>(X[i]);
       float yf = static_cast<float>(Y[i * i_stride]);
       float zf = xf / (alpha * yf) + ((0.0f == beta) ? 0.0f : beta * static_cast<float>(Z[i]));
