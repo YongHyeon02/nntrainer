@@ -651,16 +651,23 @@ void ele_sub(const unsigned int N, const _Float16 *X, const _Float16 *Y,
 void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
              _Float16 *Z, float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
+  // Newton-Raphson reciprocal helper constant
+  const __m256 two = _mm256_set1_ps(2.0f);
+
   if (alpha == 1.0f && beta == 0.0f && o_stride == 1) {
     unsigned int i = 0;
     if (i_stride == 0) {
+      // Precompute refined reciprocal of Y[0] once (rcp + Newton-Raphson)
       __m256 vy = _mm256_set1_ps(static_cast<float>(Y[0]));
+      __m256 rcp_est = _mm256_rcp_ps(vy);
+      __m256 vy_inv = _mm256_mul_ps(rcp_est, _mm256_fnmadd_ps(vy, rcp_est, two));
+
       for (; i + 16 <= N; i += 16) {
         __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
         __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
         __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
-        __m256 z_lo = _mm256_div_ps(x_lo, vy);
-        __m256 z_hi = _mm256_div_ps(x_hi, vy);
+        __m256 z_lo = _mm256_mul_ps(x_lo, vy_inv);
+        __m256 z_hi = _mm256_mul_ps(x_hi, vy_inv);
         __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
         __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
         _mm256_storeu_si256((__m256i *)(Z + i),
@@ -668,7 +675,7 @@ void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
       }
       for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
-        __m256 z = _mm256_div_ps(x, vy);
+        __m256 z = _mm256_mul_ps(x, vy_inv);
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
@@ -684,8 +691,13 @@ void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
         __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
         __m256 y_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(yd));
         __m256 y_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(yd, 1));
-        __m256 z_lo = _mm256_div_ps(x_lo, y_lo);
-        __m256 z_hi = _mm256_div_ps(x_hi, y_hi);
+        // rcp + Newton-Raphson for per-element reciprocal
+        __m256 rcp_lo = _mm256_rcp_ps(y_lo);
+        __m256 inv_lo = _mm256_mul_ps(rcp_lo, _mm256_fnmadd_ps(y_lo, rcp_lo, two));
+        __m256 rcp_hi = _mm256_rcp_ps(y_hi);
+        __m256 inv_hi = _mm256_mul_ps(rcp_hi, _mm256_fnmadd_ps(y_hi, rcp_hi, two));
+        __m256 z_lo = _mm256_mul_ps(x_lo, inv_lo);
+        __m256 z_hi = _mm256_mul_ps(x_hi, inv_hi);
         __m128i r_lo = _mm256_cvtps_ph(z_lo, _MM_FROUND_TO_NEAREST_INT);
         __m128i r_hi = _mm256_cvtps_ph(z_hi, _MM_FROUND_TO_NEAREST_INT);
         _mm256_storeu_si256((__m256i *)(Z + i),
@@ -694,7 +706,9 @@ void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
       for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
-        __m256 z = _mm256_div_ps(x, y);
+        __m256 rcp_y = _mm256_rcp_ps(y);
+        __m256 inv_y = _mm256_mul_ps(rcp_y, _mm256_fnmadd_ps(y, rcp_y, two));
+        __m256 z = _mm256_mul_ps(x, inv_y);
         _mm_storeu_si128((__m128i *)(Z + i),
                          _mm256_cvtps_ph(z, _MM_FROUND_TO_NEAREST_INT));
       }
@@ -714,13 +728,17 @@ void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
     unsigned int i = 0;
 
     if (i_stride == 0) {
+      // Precompute refined reciprocal of (alpha * Y[0])
       __m256 denom = _mm256_mul_ps(alpha_v, _mm256_set1_ps(static_cast<float>(Y[0])));
+      __m256 rcp_d = _mm256_rcp_ps(denom);
+      __m256 inv_d = _mm256_mul_ps(rcp_d, _mm256_fnmadd_ps(denom, rcp_d, two));
+
       for (; i + 16 <= N; i += 16) {
         __m256i xd = _mm256_loadu_si256((const __m256i *)(X + i));
         __m256 x_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(xd));
         __m256 x_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(xd, 1));
-        __m256 z_lo = _mm256_div_ps(x_lo, denom);
-        __m256 z_hi = _mm256_div_ps(x_hi, denom);
+        __m256 z_lo = _mm256_mul_ps(x_lo, inv_d);
+        __m256 z_hi = _mm256_mul_ps(x_hi, inv_d);
         if (beta != 0.0f) {
           __m256i zd = _mm256_loadu_si256((const __m256i *)(Z + i));
           __m256 zo_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(zd));
@@ -735,7 +753,7 @@ void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
       }
       for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
-        __m256 z = _mm256_div_ps(x, denom);
+        __m256 z = _mm256_mul_ps(x, inv_d);
         if (beta != 0.0f) {
           __m256 z_old =
             _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
@@ -754,8 +772,13 @@ void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
         __m256 y_hi = _mm256_cvtph_ps(_mm256_extracti128_si256(yd, 1));
         __m256 d_lo = _mm256_mul_ps(alpha_v, y_lo);
         __m256 d_hi = _mm256_mul_ps(alpha_v, y_hi);
-        __m256 z_lo = _mm256_div_ps(x_lo, d_lo);
-        __m256 z_hi = _mm256_div_ps(x_hi, d_hi);
+        // rcp + Newton-Raphson for per-element reciprocal
+        __m256 rcp_lo = _mm256_rcp_ps(d_lo);
+        __m256 inv_lo = _mm256_mul_ps(rcp_lo, _mm256_fnmadd_ps(d_lo, rcp_lo, two));
+        __m256 rcp_hi = _mm256_rcp_ps(d_hi);
+        __m256 inv_hi = _mm256_mul_ps(rcp_hi, _mm256_fnmadd_ps(d_hi, rcp_hi, two));
+        __m256 z_lo = _mm256_mul_ps(x_lo, inv_lo);
+        __m256 z_hi = _mm256_mul_ps(x_hi, inv_hi);
         if (beta != 0.0f) {
           __m256i zd = _mm256_loadu_si256((const __m256i *)(Z + i));
           __m256 zo_lo = _mm256_cvtph_ps(_mm256_castsi256_si128(zd));
@@ -771,8 +794,10 @@ void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
       for (; i + 8 <= N; i += 8) {
         __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
         __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
-        __m256 denom = _mm256_mul_ps(alpha_v, y);
-        __m256 z = _mm256_div_ps(x, denom);
+        __m256 d = _mm256_mul_ps(alpha_v, y);
+        __m256 rcp_d = _mm256_rcp_ps(d);
+        __m256 inv_d = _mm256_mul_ps(rcp_d, _mm256_fnmadd_ps(d, rcp_d, two));
+        __m256 z = _mm256_mul_ps(x, inv_d);
         if (beta != 0.0f) {
           __m256 z_old =
             _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Z + i)));
@@ -1110,10 +1135,11 @@ void inv_sqrt_inplace(const unsigned int N, _Float16 *X) {
     __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
     __m256 is_zero = _mm256_cmp_ps(x, zero, _CMP_EQ_OQ);
     __m256 est = _mm256_rsqrt_ps(x);
-    // Newton-Raphson: y = 0.5 * y * (3 - x * y * y)
-    __m256 xy2 = _mm256_mul_ps(x, _mm256_mul_ps(est, est));
+    // Newton-Raphson: y = 0.5 * y * (3 - x * y * y), using FMA
+    __m256 est2 = _mm256_mul_ps(est, est);
+    __m256 three_minus_xy2 = _mm256_fnmadd_ps(x, est2, three);
     __m256 refined =
-      _mm256_mul_ps(_mm256_mul_ps(half, est), _mm256_sub_ps(three, xy2));
+      _mm256_mul_ps(_mm256_mul_ps(half, est), three_minus_xy2);
     refined = _mm256_blendv_ps(refined, inf_val, is_zero);
     _mm_storeu_si128((__m128i *)(X + i),
                      _mm256_cvtps_ph(refined, _MM_FROUND_TO_NEAREST_INT));
