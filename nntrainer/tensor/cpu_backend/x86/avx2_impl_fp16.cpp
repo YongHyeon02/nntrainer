@@ -1170,7 +1170,7 @@ void inv_sqrt_inplace(const unsigned int N, _Float16 *X) {
   unsigned int i = 0;
   const __m256 zero = _mm256_setzero_ps();
   const __m256 inf_val = _mm256_set1_ps(INFINITY);
-  const __m256 three = _mm256_set1_ps(3.0f);
+  const __m256 three_half = _mm256_set1_ps(1.5f);
   const __m256 half = _mm256_set1_ps(0.5f);
 
   // Main loop: 16 elements per iteration
@@ -1185,13 +1185,13 @@ void inv_sqrt_inplace(const unsigned int N, _Float16 *X) {
     __m256 est0 = _mm256_rsqrt_ps(x0);
     __m256 est1 = _mm256_rsqrt_ps(x1);
 
-    // Newton-Raphson using FMA
-    __m256 est2_0 = _mm256_mul_ps(est0, est0);
-    __m256 est2_1 = _mm256_mul_ps(est1, est1);
-    __m256 nr0 = _mm256_fnmadd_ps(x0, est2_0, three);
-    __m256 nr1 = _mm256_fnmadd_ps(x1, est2_1, three);
-    __m256 ref0 = _mm256_mul_ps(_mm256_mul_ps(half, est0), nr0);
-    __m256 ref1 = _mm256_mul_ps(_mm256_mul_ps(half, est1), nr1);
+    // Newton-Raphson: y = y * (1.5 - 0.5 * x * y * y)
+    __m256 half_x0 = _mm256_mul_ps(half, x0);
+    __m256 half_x1 = _mm256_mul_ps(half, x1);
+    __m256 yy0 = _mm256_mul_ps(est0, est0);
+    __m256 yy1 = _mm256_mul_ps(est1, est1);
+    __m256 ref0 = _mm256_mul_ps(est0, _mm256_fnmadd_ps(half_x0, yy0, three_half));
+    __m256 ref1 = _mm256_mul_ps(est1, _mm256_fnmadd_ps(half_x1, yy1, three_half));
 
     ref0 = _mm256_blendv_ps(ref0, inf_val, is_zero0);
     ref1 = _mm256_blendv_ps(ref1, inf_val, is_zero1);
@@ -1207,9 +1207,9 @@ void inv_sqrt_inplace(const unsigned int N, _Float16 *X) {
     __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
     __m256 is_zero = _mm256_cmp_ps(x, zero, _CMP_EQ_OQ);
     __m256 est = _mm256_rsqrt_ps(x);
-    __m256 est2 = _mm256_mul_ps(est, est);
-    __m256 three_minus_xy2 = _mm256_fnmadd_ps(x, est2, three);
-    __m256 refined = _mm256_mul_ps(_mm256_mul_ps(half, est), three_minus_xy2);
+    __m256 half_x = _mm256_mul_ps(half, x);
+    __m256 yy = _mm256_mul_ps(est, est);
+    __m256 refined = _mm256_mul_ps(est, _mm256_fnmadd_ps(half_x, yy, three_half));
     refined = _mm256_blendv_ps(refined, inf_val, is_zero);
     _mm_storeu_si128((__m128i *)(X + i),
                      _mm256_cvtps_ph(refined, _MM_FROUND_TO_NEAREST_INT));
