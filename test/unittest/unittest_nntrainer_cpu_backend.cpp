@@ -1467,7 +1467,7 @@ DECLARE_transform_int4_test_K_N(3072, 8192, 32);
 static void run_ele_sub_test(const unsigned int N, float alpha, float beta,
                              unsigned int i_stride, unsigned int o_stride) {
   const int TEST_CNT = 20;
-  for (int i = -1; i < TEST_CNT; i++) {
+  for (int i = 0; i < TEST_CNT; i++) {
     std::vector<float> X =
       generate_random_vector<float, false>((size_t)N * o_stride);
     std::vector<float> Y = generate_random_vector<float, false>(
@@ -1505,7 +1505,7 @@ TEST(nntrainer_cpu_backend_standalone, ele_sub_3072_alpha1_beta0_istr_2) {
 static void run_ele_div_test(const unsigned int N, float alpha, float beta,
                              unsigned int i_stride, unsigned int o_stride) {
   const int TEST_CNT = 20;
-  for (int i = -1; i < TEST_CNT; i++) {
+  for (int i = 0; i < TEST_CNT; i++) {
     std::vector<float> X =
       generate_random_vector<float, false>((size_t)N * o_stride);
     std::vector<float> Y = generate_random_vector<float, false>(
