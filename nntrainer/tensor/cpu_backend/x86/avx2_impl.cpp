@@ -1430,7 +1430,7 @@ void ele_mul(const unsigned int N, const float *X, const float *Y, float *Z,
           auto z = _mm256_mul_ps(_mm256_mul_ps(x, y), alpha_v);
           if (beta != 0.0f) {
             auto z_old = _mm256_loadu_ps(Z);
-            z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+            z = _mm256_fmadd_ps(beta_v, z_old, z);
           }
           _mm256_storeu_ps(Z, z);
           X += 8;
@@ -1443,7 +1443,7 @@ void ele_mul(const unsigned int N, const float *X, const float *Y, float *Z,
           auto z = _mm256_mul_ps(_mm256_mul_ps(x, y), alpha_v);
           if (beta != 0.0f) {
             auto z_old = _mm256_loadu_ps(Z);
-            z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+            z = _mm256_fmadd_ps(beta_v, z_old, z);
           }
           _mm256_storeu_ps(Z, z);
           X += 8;
@@ -1512,10 +1512,10 @@ void ele_add(const unsigned int N, const float *X, const float *Y, float *Z,
         auto y = _mm256_set1_ps(Y[0]);
         for (unsigned int i = 0; i < N8; i += 8) {
           auto x = _mm256_loadu_ps(X);
-          auto z = _mm256_add_ps(x, _mm256_mul_ps(alpha_v, y));
+          auto z = _mm256_fmadd_ps(alpha_v, y, x);
           if (beta != 0.0f) {
             auto z_old = _mm256_loadu_ps(Z);
-            z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+            z = _mm256_fmadd_ps(beta_v, z_old, z);
           }
           _mm256_storeu_ps(Z, z);
           X += 8;
@@ -1525,10 +1525,10 @@ void ele_add(const unsigned int N, const float *X, const float *Y, float *Z,
         for (unsigned int i = 0; i < N8; i += 8) {
           auto x = _mm256_loadu_ps(X);
           auto y = _mm256_loadu_ps(Y);
-          auto z = _mm256_add_ps(x, _mm256_mul_ps(alpha_v, y));
+          auto z = _mm256_fmadd_ps(alpha_v, y, x);
           if (beta != 0.0f) {
             auto z_old = _mm256_loadu_ps(Z);
-            z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+            z = _mm256_fmadd_ps(beta_v, z_old, z);
           }
           _mm256_storeu_ps(Z, z);
           X += 8;
@@ -1607,10 +1607,10 @@ void ele_sub(const unsigned int N, const float *X, const float *Y, float *Z,
         auto y = _mm256_set1_ps(Y[0]);
         for (unsigned int i = 0; i < N8; i += 8) {
           auto x = _mm256_loadu_ps(X);
-          auto z = _mm256_sub_ps(x, _mm256_mul_ps(alpha_v, y));
+          auto z = _mm256_fnmadd_ps(alpha_v, y, x);
           if (beta != 0.0f) {
             auto z_old = _mm256_loadu_ps(Z);
-            z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+            z = _mm256_fmadd_ps(beta_v, z_old, z);
           }
           _mm256_storeu_ps(Z, z);
           X += 8;
@@ -1620,10 +1620,10 @@ void ele_sub(const unsigned int N, const float *X, const float *Y, float *Z,
         for (unsigned int i = 0; i < N8; i += 8) {
           auto x = _mm256_loadu_ps(X);
           auto y = _mm256_loadu_ps(Y);
-          auto z = _mm256_sub_ps(x, _mm256_mul_ps(alpha_v, y));
+          auto z = _mm256_fnmadd_ps(alpha_v, y, x);
           if (beta != 0.0f) {
             auto z_old = _mm256_loadu_ps(Z);
-            z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+            z = _mm256_fmadd_ps(beta_v, z_old, z);
           }
           _mm256_storeu_ps(Z, z);
           X += 8;
@@ -1706,7 +1706,7 @@ void ele_div(const unsigned int N, const float *X, const float *Y, float *Z,
           auto z = _mm256_div_ps(x, denom);
           if (beta != 0.0f) {
             auto z_old = _mm256_loadu_ps(Z);
-            z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+            z = _mm256_fmadd_ps(beta_v, z_old, z);
           }
           _mm256_storeu_ps(Z, z);
           X += 8;
@@ -1720,7 +1720,7 @@ void ele_div(const unsigned int N, const float *X, const float *Y, float *Z,
           auto z = _mm256_div_ps(x, denom);
           if (beta != 0.0f) {
             auto z_old = _mm256_loadu_ps(Z);
-            z = _mm256_add_ps(z, _mm256_mul_ps(beta_v, z_old));
+            z = _mm256_fmadd_ps(beta_v, z_old, z);
           }
           _mm256_storeu_ps(Z, z);
           X += 8;
@@ -2310,9 +2310,9 @@ void compute_rotary_emb_value(unsigned int width, unsigned int dim,
         __m256 sin_v = _mm256_loadu_ps(&sin_[k]);
 
         __m256 out0 =
-          _mm256_sub_ps(_mm256_mul_ps(a, cos_v), _mm256_mul_ps(b, sin_v));
+          _mm256_fnmadd_ps(b, sin_v, _mm256_mul_ps(a, cos_v));
         __m256 out1 =
-          _mm256_add_ps(_mm256_mul_ps(a, sin_v), _mm256_mul_ps(b, cos_v));
+          _mm256_fmadd_ps(a, sin_v, _mm256_mul_ps(b, cos_v));
 
         if (out_type == OutputType::FP16) {
           __m128i out0_fp16 = convert_vector_f32_to_f16(out0);
