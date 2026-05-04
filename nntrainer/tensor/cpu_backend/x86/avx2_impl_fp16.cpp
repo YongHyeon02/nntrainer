@@ -1443,11 +1443,11 @@ unsigned int isamax(const unsigned int N, const _Float16 *X,
   } else {
     unsigned int max_idx = 0;
     float max_val = 0.0f;
-    for (unsigned int n = 0; n < N; n += incX) {
-      float cur = std::abs(static_cast<float>(X[n]));
+    for (unsigned int i = 0; i < N; ++i) {
+      float cur = std::abs(static_cast<float>(X[i * incX]));
       if (cur > max_val) {
         max_val = cur;
-        max_idx = n;
+        max_idx = i;
       }
     }
     return max_idx;
