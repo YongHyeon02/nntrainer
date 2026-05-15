@@ -14,6 +14,7 @@
 #include <assert.h>
 #include <avx2_impl.h>
 #include <fallback_internal.h>
+#include <hgemm.h>
 #include <nntrainer_error.h>
 #include <tensor_dim.h>
 #include <x86_compute_backend.h>
@@ -178,6 +179,13 @@ void sgemm(const unsigned int TStorageOrder, bool TransA, bool TransB,
            const float alpha, const _FP16 *A, const unsigned int lda,
            const _FP16 *B, const unsigned int ldb, const float beta, _FP16 *C,
            const unsigned int ldc) {
+  // P3-1: route the NoTrans + alpha=1 case through the cache-blocked
+  // FP16 GEMM (FP16->FP32 conversion during packing, no full-matrix copy).
+  if (!TransA && !TransB && alpha == 1.0F) {
+    nntrainer::x86::hgemm_fp16_noTrans(M, N, K, A, lda, B, ldb, beta, C, ldc);
+    return;
+  }
+
 #ifdef USE_BLAS
 
   float *A_ = new float[M * K];
