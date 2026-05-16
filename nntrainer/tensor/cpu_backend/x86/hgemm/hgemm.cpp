@@ -78,13 +78,10 @@ void hgemm_compute(bool TransA, bool TransB, unsigned int M, unsigned int N,
 } // namespace
 
 void hgemm(const _FP16 *A, const _FP16 *B, _FP16 *C, unsigned int M,
-           unsigned int N, unsigned int K, float alpha, float beta, bool TransA,
+           unsigned int N, unsigned int K, unsigned int lda, unsigned int ldb,
+           unsigned int ldc, float alpha, float beta, bool TransA,
            bool TransB) {
-  const unsigned int a_stride = TransA ? M : K;
-  const unsigned int b_stride = TransB ? K : N;
-  const unsigned int c_stride = N;
-  hgemm_compute(TransA, TransB, M, N, K, alpha, A, a_stride, B, b_stride, beta,
-                C, c_stride);
+  hgemm_compute(TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
 }
 
 } /* namespace nntrainer::x86 */

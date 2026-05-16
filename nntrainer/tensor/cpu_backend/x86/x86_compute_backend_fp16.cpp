@@ -14,6 +14,7 @@
 #include <assert.h>
 #include <avx2_impl.h>
 #include <fallback_internal.h>
+#include <hgemm.h>
 #include <nntrainer_error.h>
 #include <tensor_dim.h>
 #include <x86_compute_backend.h>
@@ -179,8 +180,8 @@ void sgemm(const unsigned int TStorageOrder, bool TransA, bool TransB,
     __fallback_sgemm(TStorageOrder, TransA, TransB, M, N, K, alpha, A, lda, B,
                      ldb, beta, C, ldc);
   } else {
-    nntrainer::avx2::custom_hgemm(A, B, C, M, N, K, alpha, beta, TransA,
-                                  TransB);
+    nntrainer::x86::hgemm(A, B, C, M, N, K, lda, ldb, ldc, alpha, beta, TransA,
+                          TransB);
   }
 }
 

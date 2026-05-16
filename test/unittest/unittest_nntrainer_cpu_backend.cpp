@@ -2489,6 +2489,75 @@ TEST(nntrainer_cpu_backend_standalone, scopy_int4_to_fp16) {
   }
 }
 
+/// Exercises padded leading dimensions (lda > tight, ldb > tight, ldc > N) on
+/// the FP16 sgemm path. Each row of A / B / C is laid out with a gap; the gap
+/// bytes are touched by neither the FP32 reference nor the FP16 SUT, so the
+/// comparison window stays at [0..M, 0..N]. This guards against the regression
+/// where x86::hgemm recomputes strides from (M, N, K) instead of honoring the
+/// caller's lda/ldb/ldc.
+static void
+run_sgemm_fp16_strided_lda_test(unsigned int M, unsigned int N, unsigned int K,
+                                bool TransA, bool TransB, float alpha,
+                                float beta, unsigned int lda_extra,
+                                unsigned int ldb_extra,
+                                unsigned int ldc_extra) {
+  nntrainer::init_backend();
+
+  const unsigned int lda = (TransA ? M : K) + lda_extra;
+  const unsigned int ldb = (TransB ? K : N) + ldb_extra;
+  const unsigned int ldc = N + ldc_extra;
+  const std::size_t a_size = static_cast<std::size_t>(TransA ? K : M) * lda;
+  const std::size_t b_size = static_cast<std::size_t>(TransB ? N : K) * ldb;
+  const std::size_t c_size = static_cast<std::size_t>(M) * ldc;
+
+  auto A_fp16 = generate_random_vector<_FP16>(a_size);
+  auto B_fp16 = generate_random_vector<_FP16>(b_size);
+  auto C_fp16 = generate_random_vector<_FP16>(c_size);
+
+  std::vector<float> A_fp32(a_size);
+  std::vector<float> B_fp32(b_size);
+  std::vector<float> C_fp32_ref(c_size);
+  nntrainer::scopy(a_size, A_fp16.data(), 1, A_fp32.data(), 1);
+  nntrainer::scopy(b_size, B_fp16.data(), 1, B_fp32.data(), 1);
+  nntrainer::scopy(c_size, C_fp16.data(), 1, C_fp32_ref.data(), 1);
+
+  nntrainer::sgemm(0, TransA, TransB, M, N, K, alpha, A_fp32.data(), lda,
+                   B_fp32.data(), ldb, beta, C_fp32_ref.data(), ldc);
+  nntrainer::sgemm(0, TransA, TransB, M, N, K, alpha, A_fp16.data(), lda,
+                   B_fp16.data(), ldb, beta, C_fp16.data(), ldc);
+
+  for (unsigned int m = 0; m < M; ++m) {
+    for (unsigned int n = 0; n < N; ++n) {
+      const std::size_t i = static_cast<std::size_t>(m) * ldc + n;
+      float got = static_cast<float>(C_fp16[i]);
+      float ref = C_fp32_ref[i];
+      EXPECT_NEAR(got, ref, 0.01f * (std::abs(ref) + 1.0f))
+        << "mismatch at m=" << m << " n=" << n << " M=" << M << " N=" << N
+        << " K=" << K << " TransA=" << TransA << " TransB=" << TransB
+        << " alpha=" << alpha << " beta=" << beta << " lda=" << lda
+        << " ldb=" << ldb << " ldc=" << ldc;
+    }
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone,
+     sgemm_fp16_noTrans_strided_lda_ldb_ldc_13x33x65) {
+  run_sgemm_fp16_strided_lda_test(13, 33, 65, false, false, 1.0F, 0.0F, 4, 7,
+                                  5);
+}
+
+TEST(nntrainer_cpu_backend_standalone,
+     sgemm_fp16_transA_strided_lda_ldb_ldc_13x33x65) {
+  run_sgemm_fp16_strided_lda_test(13, 33, 65, true, false, 0.75F, -0.25F, 3, 8,
+                                  4);
+}
+
+TEST(nntrainer_cpu_backend_standalone,
+     sgemm_fp16_transB_strided_lda_ldb_ldc_13x33x65) {
+  run_sgemm_fp16_strided_lda_test(13, 33, 65, false, true, -0.5F, 0.125F, 6, 2,
+                                  1);
+}
+
 #endif // ENABLE_FP16
 
 int main(int argc, char **argv) {

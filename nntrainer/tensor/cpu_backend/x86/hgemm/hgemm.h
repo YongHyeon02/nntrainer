@@ -25,20 +25,25 @@ namespace nntrainer::x86 {
  * blocks. Internal compute is done in FP32; the result is converted back to
  * FP16 on writeback.
  *
- * @param A    FP16 source matrix, row-major contiguous
- * @param B    FP16 source matrix, row-major contiguous
- * @param C    FP16 destination, row-major contiguous
- * @param M    rows of A / C
- * @param N    cols of B / C
+ * @param A    FP16 source matrix, row-major
+ * @param B    FP16 source matrix, row-major
+ * @param C    FP16 destination, row-major
+ * @param M    rows of op(A) / C
+ * @param N    cols of op(B) / C
  * @param K    inner dimension
+ * @param lda  leading dimension of A (row stride in elements). Must be >=
+ *             (TransA ? M : K).
+ * @param ldb  leading dimension of B (row stride in elements). Must be >=
+ *             (TransB ? K : N).
+ * @param ldc  leading dimension of C (row stride in elements). Must be >= N.
  * @param alpha scalar applied to op(A) * op(B)
  * @param beta scalar applied to C before accumulation
  * @param TransA whether A is transposed
  * @param TransB whether B is transposed
  */
 void hgemm(const _FP16 *A, const _FP16 *B, _FP16 *C, unsigned int M,
-           unsigned int N, unsigned int K, float alpha, float beta, bool TransA,
-           bool TransB);
+           unsigned int N, unsigned int K, unsigned int lda, unsigned int ldb,
+           unsigned int ldc, float alpha, float beta, bool TransA, bool TransB);
 
 } /* namespace nntrainer::x86 */
 

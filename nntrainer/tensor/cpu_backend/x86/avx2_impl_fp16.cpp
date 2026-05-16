@@ -14,7 +14,6 @@
 
 #include <avx2_impl.h>
 #include "avx2_internal.h"
-#include <hgemm.h>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -1463,12 +1462,6 @@ void transpose_matrix(const unsigned int M, const unsigned int N,
       dst[i + j * ld_dst] = src[i * ld_src + j];
     }
   }
-}
-
-void custom_hgemm(const _Float16 *A, const _Float16 *B, _Float16 *C,
-                  uint32_t M, uint32_t N, uint32_t K, float alpha, float beta,
-                  bool TransA, bool TransB) {
-  nntrainer::x86::hgemm(A, B, C, M, N, K, alpha, beta, TransA, TransB);
 }
 
 void scopy_int4_to_float16(const unsigned int N, const uint8_t *X,
