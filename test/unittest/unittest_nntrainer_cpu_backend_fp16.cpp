@@ -9,7 +9,11 @@
  */
 
 #include "int4_utils.h"
+#ifdef __ANDROID__
+// KleidiAI interface is only wired in via Android.mk; on Linux/meson the
+// header (and its qsi8d32p/qsi4c32p backend) is unavailable.
 #include "kleidiai_interface.h"
+#endif
 #include "nntrainer_test_util.h"
 #include <cfloat>
 #include <cpu_backend.h>
@@ -268,6 +272,10 @@ TEST(nntrainer_cpu_backend_standalone, quant_GEMV_1x3072x3072) {
   ASSERT_LE(q6_k_mse, q4_0_mse);
 }
 
+#ifdef __ANDROID__
+// nntrainer::sine / cosine have no _FP16 instantiation in the x86 backend
+// (FP32-only). The helper and TEST below stay Android-only until the x86
+// backend grows an FP16 sine/cosine path.
 static void run_trigonometric_values_test(const unsigned int N,
                                           bool print = false) {
   const int TEST_CNT = 20;
@@ -668,6 +676,11 @@ TEST(nntrainer_cpu_backend_standalone, qai8dxp_qsi4cxp_3072x512x512_CMP) {
   ASSERT_LE(qai8dxp_qsi4cxp_mse_packed, eps * M * K * N);
 }
 
+#ifdef __ANDROID__
+// The qsi8d32p_qsi4c32p path is only exposed on Android via KleidiAI; the
+// x86 cpu_backend does not provide nntr_quant_qs4c32_f32 /
+// nntr_*_qsi8d32p_qsi4c32p_*, so these helpers and TESTs are excluded on
+// Linux/meson builds.
 std::tuple<float, uint32_t> test_gemm_qsi8d32p_qsi4c32p_unpacked(
   const uint32_t M, const uint32_t K, const uint32_t N, const float *weights,
   const float *activations, std::vector<float> &ref_dst, bool transB = true,
@@ -1058,13 +1071,19 @@ DECLARE_transform_osv32_to_qsi4c32p_test(512, 256);
 DECLARE_transform_osv32_to_qsi4c32p_test(512, 512);
 DECLARE_transform_osv32_to_qsi4c32p_test(1024, 512);
 DECLARE_transform_osv32_to_qsi4c32p_test(1024, 1024);
+#endif // __ANDROID__ (end of qsi8d32p_qsi4c32p region)
 
 TEST(nntrainer_cpu_backend_standalone, trigonometric_values_test) {
 
   const unsigned int N = 3072;
   run_trigonometric_values_test(N);
 }
+#endif // __ANDROID__ (end of trigonometric_values_test region)
 
+#ifdef __ANDROID__
+// gemm_benchmark_comparison mixes the qai8dxp path (x86-available) with the
+// qsi8d32p path (KleidiAI-only); both are needed for the three-way comparison,
+// so the whole benchmark is gated to Android.
 /**
  * @brief Benchmark comparison of three GEMM implementations
  *
@@ -1272,6 +1291,7 @@ TEST(nntrainer_cpu_backend_standalone, gemm_benchmark_comparison_32x1024x4096) {
 TEST(nntrainer_cpu_backend_standalone, gemm_benchmark_comparison_1x3072x512) {
   run_gemm_benchmark_comparison(1, 3072, 512);
 }
+#endif // __ANDROID__ (end of gemm_benchmark_comparison region)
 
 /// FP16 sgemm path: exercises the x86 cache-blocked GEMM.
 /// Reference is the FP32 sgemm (CBLAS) on FP32 copies of the inputs.
