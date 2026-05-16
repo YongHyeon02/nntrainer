@@ -17,13 +17,14 @@
 namespace nntrainer::x86 {
 
 void hgemm_kernel_6x16(unsigned int K, const float *packed_A,
-                       const float *packed_B, float *C, unsigned int ldc) {
-  float *c0 = C + 0 * ldc;
-  float *c1 = C + 1 * ldc;
-  float *c2 = C + 2 * ldc;
-  float *c3 = C + 3 * ldc;
-  float *c4 = C + 4 * ldc;
-  float *c5 = C + 5 * ldc;
+                       const float *packed_B, float *C,
+                       unsigned int c_stride) {
+  float *c0 = C + 0 * c_stride;
+  float *c1 = C + 1 * c_stride;
+  float *c2 = C + 2 * c_stride;
+  float *c3 = C + 3 * c_stride;
+  float *c4 = C + 4 * c_stride;
+  float *c5 = C + 5 * c_stride;
 
   __m256 c00 = _mm256_loadu_ps(c0 + 0);
   __m256 c01 = _mm256_loadu_ps(c0 + 8);

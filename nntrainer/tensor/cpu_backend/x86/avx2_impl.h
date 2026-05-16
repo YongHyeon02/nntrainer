@@ -94,6 +94,24 @@ unsigned int isamax(const unsigned int N, const _Float16 *X,
 void transpose_matrix(const unsigned int M, const unsigned int N,
                       const _Float16 *src, unsigned int ld_src, _Float16 *dst,
                       unsigned int ld_dst);
+/**
+ * @brief hgemm computation with AVX2/F16C : C = alpha*op(A)*op(B) + beta*C,
+ * where op(X) is one of X or X**T
+ *
+ * @param[in] A _Float16 * for Matrix A
+ * @param[in] B _Float16 * for Matrix B
+ * @param[in,out] C _Float16 * for Matrix C
+ * @param[in] M number of op(A)'s and C's rows
+ * @param[in] N number of op(B)'s and C's columns
+ * @param[in] K number of op(A)'s columns and op(B)'s rows
+ * @param[in] alpha float number
+ * @param[in] beta float number
+ * @param[in] TransA bool transpose info of lhs matrix
+ * @param[in] TransB bool transpose info of rhs matrix
+ */
+void custom_hgemm(const _Float16 *A, const _Float16 *B, _Float16 *C,
+                  uint32_t M, uint32_t N, uint32_t K, float alpha, float beta,
+                  bool TransA, bool TransB);
 void scopy_int4_to_float16(const unsigned int N, const uint8_t *X,
                            const unsigned int incX, _Float16 *Y,
                            const unsigned int incY);

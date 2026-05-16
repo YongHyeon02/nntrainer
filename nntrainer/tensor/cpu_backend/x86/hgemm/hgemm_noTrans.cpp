@@ -7,7 +7,7 @@
  * @see    https://github.com/nntrainer/nntrainer
  * @author Yonghyeon Cho <dyddyd8574@gmail.com>
  * @bug    No known bugs except for NYI items
- * @brief  Blocked NoTrans dispatcher for x86 FP16 GEMM
+ * @brief  Blocked dispatcher for x86 FP16 GEMM
  */
 
 #include "hgemm_noTrans.h"
@@ -19,10 +19,11 @@
 
 namespace nntrainer::x86 {
 
-void hgemm_noTrans_kernel(unsigned int M, unsigned int N, unsigned int K,
-                          const _FP16 *A, unsigned int lda, const _FP16 *B,
-                          unsigned int ldb, float *C32, unsigned int ldc32,
-                          float *sa, float *sb) {
+void hgemm_blocked_kernel(bool TransA, bool TransB, unsigned int M,
+                          unsigned int N, unsigned int K, float alpha,
+                          const _FP16 *A, unsigned int a_stride,
+                          const _FP16 *B, unsigned int b_stride, float *C32,
+                          unsigned int c32_stride, float *sa, float *sb) {
   for (unsigned int ms = 0; ms < M; ms += X86_HGEMM_M_BLOCKING) {
     unsigned int m_min = std::min<unsigned int>(M - ms, X86_HGEMM_M_BLOCKING);
 
@@ -34,8 +35,15 @@ void hgemm_noTrans_kernel(unsigned int M, unsigned int N, unsigned int K,
       for (unsigned int mm = 0; mm < m_min; mm += X86_HGEMM_MR) {
         unsigned int m_act =
           std::min<unsigned int>(m_min - mm, X86_HGEMM_MR);
-        packing_A_M6(m_act, k_min, A + (ms + mm) * lda + ks, lda,
-                     sa + (mm / X86_HGEMM_MR) * (k_min * X86_HGEMM_MR));
+        float *pa = sa + (mm / X86_HGEMM_MR) * (k_min * X86_HGEMM_MR);
+        if (TransA) {
+          packing_A_M6_trans(m_act, k_min,
+                             A + ks * a_stride + (ms + mm), a_stride, alpha,
+                             pa);
+        } else {
+          packing_A_M6(m_act, k_min, A + (ms + mm) * a_stride + ks, a_stride,
+                       alpha, pa);
+        }
       }
 
       for (unsigned int ns = 0; ns < N; ns += X86_HGEMM_N_BLOCKING) {
@@ -46,8 +54,14 @@ void hgemm_noTrans_kernel(unsigned int M, unsigned int N, unsigned int K,
         for (unsigned int nn = 0; nn < n_min; nn += X86_HGEMM_NR) {
           unsigned int n_act =
             std::min<unsigned int>(n_min - nn, X86_HGEMM_NR);
-          packing_B_N16(k_min, n_act, B + ks * ldb + (ns + nn), ldb,
-                        sb + (nn / X86_HGEMM_NR) * (k_min * X86_HGEMM_NR));
+          float *pb = sb + (nn / X86_HGEMM_NR) * (k_min * X86_HGEMM_NR);
+          if (TransB) {
+            packing_B_N16_trans(k_min, n_act,
+                                B + (ns + nn) * b_stride + ks, b_stride, pb);
+          } else {
+            packing_B_N16(k_min, n_act, B + ks * b_stride + (ns + nn),
+                          b_stride, pb);
+          }
         }
 
         // Inner GEMM: iterate MR-row tiles outer, NR-col tiles inner.
@@ -57,8 +71,8 @@ void hgemm_noTrans_kernel(unsigned int M, unsigned int N, unsigned int K,
           for (unsigned int nn = 0; nn < n_min; nn += X86_HGEMM_NR) {
             const float *pb =
               sb + (nn / X86_HGEMM_NR) * (k_min * X86_HGEMM_NR);
-            float *c_tile = C32 + (ms + mm) * ldc32 + (ns + nn);
-            hgemm_kernel_6x16(k_min, pa, pb, c_tile, ldc32);
+            float *c_tile = C32 + (ms + mm) * c32_stride + (ns + nn);
+            hgemm_kernel_6x16(k_min, pa, pb, c_tile, c32_stride);
           }
         }
       }

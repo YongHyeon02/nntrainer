@@ -18,7 +18,11 @@
 namespace nntrainer::x86 {
 
 void packing_A_M6(unsigned int m_actual, unsigned int k_min,
-                  const _FP16 *src, unsigned int lda, float *dst) {
+                  const _FP16 *src, unsigned int src_stride, float alpha,
+                  float *dst) {
+  const bool alpha_one = (alpha == 1.0F);
+  const __m256 valpha = _mm256_set1_ps(alpha);
+
   if (m_actual == X86_HGEMM_MR) {
     // Fast path: 6 rows, SIMD convert 8 k-elements per row, then transpose
     // into k-major MR-tile layout via scalar scatter store.
@@ -27,8 +31,11 @@ void packing_A_M6(unsigned int m_actual, unsigned int k_min,
     for (; k + 8 <= k_min; k += 8) {
       for (unsigned int mr = 0; mr < X86_HGEMM_MR; ++mr) {
         __m128i a16 = _mm_loadu_si128(
-          reinterpret_cast<const __m128i *>(src + mr * lda + k));
+          reinterpret_cast<const __m128i *>(src + mr * src_stride + k));
         __m256 a32 = _mm256_cvtph_ps(a16);
+        if (!alpha_one) {
+          a32 = _mm256_mul_ps(a32, valpha);
+        }
         _mm256_store_ps(tmp[mr], a32);
       }
       for (unsigned int koff = 0; koff < 8; ++koff) {
@@ -43,12 +50,12 @@ void packing_A_M6(unsigned int m_actual, unsigned int k_min,
     }
     for (; k < k_min; ++k) {
       float *out = dst + k * X86_HGEMM_MR;
-      out[0] = static_cast<float>(src[0 * lda + k]);
-      out[1] = static_cast<float>(src[1 * lda + k]);
-      out[2] = static_cast<float>(src[2 * lda + k]);
-      out[3] = static_cast<float>(src[3 * lda + k]);
-      out[4] = static_cast<float>(src[4 * lda + k]);
-      out[5] = static_cast<float>(src[5 * lda + k]);
+      out[0] = alpha * static_cast<float>(src[0 * src_stride + k]);
+      out[1] = alpha * static_cast<float>(src[1 * src_stride + k]);
+      out[2] = alpha * static_cast<float>(src[2 * src_stride + k]);
+      out[3] = alpha * static_cast<float>(src[3 * src_stride + k]);
+      out[4] = alpha * static_cast<float>(src[4 * src_stride + k]);
+      out[5] = alpha * static_cast<float>(src[5 * src_stride + k]);
     }
     return;
   }
@@ -58,7 +65,23 @@ void packing_A_M6(unsigned int m_actual, unsigned int k_min,
     float *out = dst + k * X86_HGEMM_MR;
     unsigned int m = 0;
     for (; m < m_actual; ++m) {
-      out[m] = static_cast<float>(src[m * lda + k]);
+      out[m] = alpha * static_cast<float>(src[m * src_stride + k]);
+    }
+    for (; m < X86_HGEMM_MR; ++m) {
+      out[m] = 0.0F;
+    }
+  }
+}
+
+void packing_A_M6_trans(unsigned int m_actual, unsigned int k_min,
+                        const _FP16 *src, unsigned int src_stride, float alpha,
+                        float *dst) {
+  for (unsigned int k = 0; k < k_min; ++k) {
+    const _FP16 *row = src + k * src_stride;
+    float *out = dst + k * X86_HGEMM_MR;
+    unsigned int m = 0;
+    for (; m < m_actual; ++m) {
+      out[m] = alpha * static_cast<float>(row[m]);
     }
     for (; m < X86_HGEMM_MR; ++m) {
       out[m] = 0.0F;
@@ -67,11 +90,11 @@ void packing_A_M6(unsigned int m_actual, unsigned int k_min,
 }
 
 void packing_B_N16(unsigned int k_min, unsigned int n_actual,
-                   const _FP16 *src, unsigned int ldb, float *dst) {
+                   const _FP16 *src, unsigned int src_stride, float *dst) {
   if (n_actual == X86_HGEMM_NR) {
     // Fast path: each k-row contributes 16 contiguous FP16 -> 16 FP32.
     for (unsigned int k = 0; k < k_min; ++k) {
-      const _FP16 *row = src + k * ldb;
+      const _FP16 *row = src + k * src_stride;
       __m128i b16_lo = _mm_loadu_si128(reinterpret_cast<const __m128i *>(row));
       __m128i b16_hi =
         _mm_loadu_si128(reinterpret_cast<const __m128i *>(row + 8));
@@ -86,11 +109,26 @@ void packing_B_N16(unsigned int k_min, unsigned int n_actual,
 
   // Edge path: n_actual in [1, NR). Pad missing cols with 0.
   for (unsigned int k = 0; k < k_min; ++k) {
-    const _FP16 *row = src + k * ldb;
+    const _FP16 *row = src + k * src_stride;
     float *out = dst + k * X86_HGEMM_NR;
     unsigned int n = 0;
     for (; n < n_actual; ++n) {
       out[n] = static_cast<float>(row[n]);
+    }
+    for (; n < X86_HGEMM_NR; ++n) {
+      out[n] = 0.0F;
+    }
+  }
+}
+
+void packing_B_N16_trans(unsigned int k_min, unsigned int n_actual,
+                         const _FP16 *src, unsigned int src_stride,
+                         float *dst) {
+  for (unsigned int k = 0; k < k_min; ++k) {
+    float *out = dst + k * X86_HGEMM_NR;
+    unsigned int n = 0;
+    for (; n < n_actual; ++n) {
+      out[n] = static_cast<float>(src[n * src_stride + k]);
     }
     for (; n < X86_HGEMM_NR; ++n) {
       out[n] = 0.0F;

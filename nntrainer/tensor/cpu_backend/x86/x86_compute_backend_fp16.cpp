@@ -14,7 +14,6 @@
 #include <assert.h>
 #include <avx2_impl.h>
 #include <fallback_internal.h>
-#include <hgemm.h>
 #include <nntrainer_error.h>
 #include <tensor_dim.h>
 #include <x86_compute_backend.h>
@@ -51,8 +50,8 @@ void shgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,
             const unsigned int N, const float alpha, const float *A,
             const unsigned int lda, const _FP16 *X, const unsigned int incX,
             const float beta, float *Y, const unsigned int incY) {
-  unsigned int lenX = (TransA) ? 1 + (M - 1) * (incX) : 1 + (N - 1) * (incX);
-  unsigned int lenY = (TransA) ? 1 + (N - 1) * (incY) : 1 + (M - 1) * (incY);
+  const unsigned int lenX =
+    (TransA) ? 1 + (M - 1) * (incX) : 1 + (N - 1) * (incX);
 
   float *X_ = new float[lenX];
 
@@ -93,9 +92,6 @@ void hsgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,
             const unsigned int N, const float alpha, const _FP16 *A,
             const unsigned int lda, const float *X, const unsigned int incX,
             const float beta, float *Y, const unsigned int incY) {
-  unsigned int lenX = (TransA) ? 1 + (M - 1) * (incX) : 1 + (N - 1) * (incX);
-  unsigned int lenY = (TransA) ? 1 + (N - 1) * (incY) : 1 + (M - 1) * (incY);
-
   float *A_ = new float[M * N];
 
   scopy(M * N, A, 1, A_, 1);
@@ -179,35 +175,13 @@ void sgemm(const unsigned int TStorageOrder, bool TransA, bool TransB,
            const float alpha, const _FP16 *A, const unsigned int lda,
            const _FP16 *B, const unsigned int ldb, const float beta, _FP16 *C,
            const unsigned int ldc) {
-  // P3-1: route the NoTrans + alpha=1 case through the cache-blocked
-  // FP16 GEMM (FP16->FP32 conversion during packing, no full-matrix copy).
-  if (!TransA && !TransB && alpha == 1.0F) {
-    nntrainer::x86::hgemm_fp16_noTrans(M, N, K, A, lda, B, ldb, beta, C, ldc);
-    return;
+  if (TStorageOrder) {
+    __fallback_sgemm(TStorageOrder, TransA, TransB, M, N, K, alpha, A, lda, B,
+                     ldb, beta, C, ldc);
+  } else {
+    nntrainer::avx2::custom_hgemm(A, B, C, M, N, K, alpha, beta, TransA,
+                                  TransB);
   }
-
-#ifdef USE_BLAS
-
-  float *A_ = new float[M * K];
-  float *B_ = new float[N * K];
-  float *C_ = new float[M * N];
-
-  scopy(M * K, A, 1, A_, 1);
-  scopy(N * K, B, 1, B_, 1);
-  scopy(M * N, C, 1, C_, 1);
-
-  __cblas_sgemm(TStorageOrder, TransA, TransB, M, N, K, alpha, A_, lda, B_, ldb,
-                beta, C_, ldc);
-
-  scopy(M * N, C_, 1, C, 1);
-
-  delete[] A_;
-  delete[] B_;
-  delete[] C_;
-#else
-  __fallback_sgemm(TStorageOrder, TransA, TransB, M, N, K, alpha, A, lda, B,
-                   ldb, beta, C, ldc);
-#endif
 }
 
 void sgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,

@@ -1273,60 +1273,87 @@ TEST(nntrainer_cpu_backend_standalone, gemm_benchmark_comparison_1x3072x512) {
   run_gemm_benchmark_comparison(1, 3072, 512);
 }
 
-/// FP16 sgemm NoTrans path: exercises the x86 P3-1 cache-blocked GEMM.
+/// FP16 sgemm path: exercises the x86 cache-blocked GEMM.
 /// Reference is the FP32 sgemm (CBLAS) on FP32 copies of the inputs.
 /// Tolerance follows X86-P3 accuracy spec: |new - ref| < 0.01 (FP16 limit).
-static void run_sgemm_fp16_noTrans_test(unsigned int M, unsigned int N,
-                                        unsigned int K) {
+static void run_sgemm_fp16_test(unsigned int M, unsigned int N, unsigned int K,
+                                bool TransA = false, bool TransB = false,
+                                float alpha = 1.0F, float beta = 0.0F) {
   nntrainer::init_backend();
 
-  auto A_fp16 = generate_random_vector<_FP16>(M * K);
-  auto B_fp16 = generate_random_vector<_FP16>(K * N);
-  std::vector<_FP16> C_fp16(M * N, static_cast<_FP16>(0.0f));
+  const unsigned int lda = TransA ? M : K;
+  const unsigned int ldb = TransB ? K : N;
+  const unsigned int ldc = N;
+  const std::size_t a_size = static_cast<std::size_t>(TransA ? K : M) * lda;
+  const std::size_t b_size = static_cast<std::size_t>(TransB ? N : K) * ldb;
+  const std::size_t c_size = static_cast<std::size_t>(M) * ldc;
 
-  std::vector<float> A_fp32(M * K);
-  std::vector<float> B_fp32(K * N);
-  std::vector<float> C_fp32_ref(M * N, 0.0f);
-  nntrainer::scopy(M * K, A_fp16.data(), 1, A_fp32.data(), 1);
-  nntrainer::scopy(K * N, B_fp16.data(), 1, B_fp32.data(), 1);
+  auto A_fp16 = generate_random_vector<_FP16>(a_size);
+  auto B_fp16 = generate_random_vector<_FP16>(b_size);
+  auto C_fp16 = generate_random_vector<_FP16>(c_size);
+
+  std::vector<float> A_fp32(a_size);
+  std::vector<float> B_fp32(b_size);
+  std::vector<float> C_fp32_ref(c_size);
+  nntrainer::scopy(a_size, A_fp16.data(), 1, A_fp32.data(), 1);
+  nntrainer::scopy(b_size, B_fp16.data(), 1, B_fp32.data(), 1);
+  nntrainer::scopy(c_size, C_fp16.data(), 1, C_fp32_ref.data(), 1);
 
   // Reference: FP32 sgemm via the existing FP32 path (delegates to CBLAS).
-  nntrainer::sgemm(0, false, false, M, N, K, 1.0f, A_fp32.data(), K,
-                   B_fp32.data(), N, 0.0f, C_fp32_ref.data(), N);
+  nntrainer::sgemm(0, TransA, TransB, M, N, K, alpha, A_fp32.data(), lda,
+                   B_fp32.data(), ldb, beta, C_fp32_ref.data(), ldc);
 
-  // System under test: FP16 sgemm — routed to x86::hgemm_fp16_noTrans by the
-  // x86 backend dispatcher when (!TransA && !TransB && alpha == 1).
-  nntrainer::sgemm(0, false, false, M, N, K, 1.0f, A_fp16.data(), K,
-                   B_fp16.data(), N, 0.0f, C_fp16.data(), N);
+  // System under test: FP16 sgemm, routed to x86::hgemm_fp16 by the x86
+  // backend dispatcher for row-major inputs.
+  nntrainer::sgemm(0, TransA, TransB, M, N, K, alpha, A_fp16.data(), lda,
+                   B_fp16.data(), ldb, beta, C_fp16.data(), ldc);
 
-  for (unsigned int i = 0; i < M * N; ++i) {
+  for (std::size_t i = 0; i < c_size; ++i) {
     float got = static_cast<float>(C_fp16[i]);
     float ref = C_fp32_ref[i];
     EXPECT_NEAR(got, ref, 0.01f * (std::abs(ref) + 1.0f))
-      << "mismatch at i=" << i << " M=" << M << " N=" << N << " K=" << K;
+      << "mismatch at i=" << i << " M=" << M << " N=" << N << " K=" << K
+      << " TransA=" << TransA << " TransB=" << TransB << " alpha=" << alpha
+      << " beta=" << beta;
   }
 }
 
 TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_noTrans_aligned_12x32x32) {
-  run_sgemm_fp16_noTrans_test(12, 32, 32);
+  run_sgemm_fp16_test(12, 32, 32);
 }
 
 TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_noTrans_aligned_256x512x128) {
-  run_sgemm_fp16_noTrans_test(256, 512, 128);
+  run_sgemm_fp16_test(256, 512, 128);
 }
 
 TEST(nntrainer_cpu_backend_standalone,
      sgemm_fp16_noTrans_aligned_1024x1024x1024) {
-  run_sgemm_fp16_noTrans_test(1024, 1024, 1024);
+  run_sgemm_fp16_test(1024, 1024, 1024);
 }
 
 TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_noTrans_unaligned_7x17x33) {
   // Exercises both M-edge (7 = 6 + 1) and N-edge (17 = 16 + 1) cleanup.
-  run_sgemm_fp16_noTrans_test(7, 17, 33);
+  run_sgemm_fp16_test(7, 17, 33);
 }
 
 TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_noTrans_unaligned_13x33x65) {
-  run_sgemm_fp16_noTrans_test(13, 33, 65);
+  run_sgemm_fp16_test(13, 33, 65);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_noTrans_alpha_beta_13x33x65) {
+  run_sgemm_fp16_test(13, 33, 65, false, false, -0.75F, 0.25F);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_transA_unaligned_13x33x65) {
+  run_sgemm_fp16_test(13, 33, 65, true, false, 0.5F, -0.125F);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_transB_unaligned_13x33x65) {
+  run_sgemm_fp16_test(13, 33, 65, false, true, 1.25F, 0.5F);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_transAB_unaligned_13x33x65) {
+  run_sgemm_fp16_test(13, 33, 65, true, true, -1.0F, 0.125F);
 }
 
 int main(int argc, char **argv) {

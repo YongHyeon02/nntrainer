@@ -26,10 +26,11 @@ namespace nntrainer::x86 {
  * @param packed_A   FP32 packed A stripe (size K * 6)
  * @param packed_B   FP32 packed B stripe (size K * 16)
  * @param C          FP32 accumulator origin (M_tile = 6 rows, N_tile = 16 cols)
- * @param ldc        leading dimension of C (in elements)
+ * @param c_stride   row stride of C (in elements)
  */
 void hgemm_kernel_6x16(unsigned int K, const float *packed_A,
-                       const float *packed_B, float *C, unsigned int ldc);
+                       const float *packed_B, float *C,
+                       unsigned int c_stride);
 
 } /* namespace nntrainer::x86 */
 
