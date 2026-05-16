@@ -76,6 +76,30 @@ void packing_A_M6(unsigned int m_actual, unsigned int k_min,
 void packing_A_M6_trans(unsigned int m_actual, unsigned int k_min,
                         const _FP16 *src, unsigned int src_stride, float alpha,
                         float *dst) {
+  const bool alpha_one = (alpha == 1.0F);
+
+  if (m_actual == X86_HGEMM_MR) {
+    // Fast path: per k, m runs unit-stride over MR=6 contiguous FP16.
+    // Load the first 4 via _mm_loadl_epi64 (safe 8-byte read, never reads
+    // past row[3]) and finish the remaining 2 lanes in scalar. Avoids the
+    // OOB risk of a full 16-byte / 8-FP16 load at the last k iteration.
+    const __m128 valpha = _mm_set1_ps(alpha);
+    for (unsigned int k = 0; k < k_min; ++k) {
+      const _FP16 *row = src + k * src_stride;
+      float *out = dst + k * X86_HGEMM_MR;
+      __m128i a16 = _mm_loadl_epi64(reinterpret_cast<const __m128i *>(row));
+      __m128 a32 = _mm_cvtph_ps(a16);
+      if (!alpha_one) {
+        a32 = _mm_mul_ps(a32, valpha);
+      }
+      _mm_storeu_ps(out, a32);
+      out[4] = alpha * static_cast<float>(row[4]);
+      out[5] = alpha * static_cast<float>(row[5]);
+    }
+    return;
+  }
+
+  // Edge path: m_actual in [1, MR). Pad missing rows with 0.
   for (unsigned int k = 0; k < k_min; ++k) {
     const _FP16 *row = src + k * src_stride;
     float *out = dst + k * X86_HGEMM_MR;
