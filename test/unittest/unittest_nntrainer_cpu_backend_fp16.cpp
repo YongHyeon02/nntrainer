@@ -16,7 +16,7 @@
 #endif
 #include "nntrainer_test_util.h"
 #if defined(ENABLE_TEST) && (defined(__x86_64__) || defined(_M_X64))
-#include <hgemm.h>
+#include <hgemm_test.h>
 #define X86_HGEMM_WORKSPACE_STATS_AVAILABLE 1
 #endif
 #include <algorithm>

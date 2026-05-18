@@ -13,6 +13,9 @@
 #include "hgemm.h"
 #include "hgemm_common.h"
 #include "hgemm_noTrans.h"
+#ifdef ENABLE_TEST
+#include "hgemm_test.h"
+#endif
 #include "hgemm_util.h"
 
 #include <cmath>

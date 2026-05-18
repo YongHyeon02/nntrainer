@@ -13,7 +13,6 @@
 #ifndef __X86_HGEMM_H_
 #define __X86_HGEMM_H_
 
-#include <cstddef>
 #include <tensor_dim.h>
 
 namespace nntrainer::x86 {
@@ -45,26 +44,6 @@ namespace nntrainer::x86 {
 void hgemm(const _FP16 *A, const _FP16 *B, _FP16 *C, unsigned int M,
            unsigned int N, unsigned int K, unsigned int lda, unsigned int ldb,
            unsigned int ldc, float alpha, float beta, bool TransA, bool TransB);
-
-#ifdef ENABLE_TEST
-namespace testing {
-
-struct HgemmWorkspaceStats {
-  std::size_t c32_capacity = 0;
-  std::size_t pack_a_capacity = 0;
-  std::size_t pack_b_capacity = 0;
-  std::size_t c32_realloc_count = 0;
-  std::size_t pack_a_realloc_count = 0;
-  std::size_t pack_b_realloc_count = 0;
-  std::size_t total_realloc_count = 0;
-  std::size_t total_capacity_bytes = 0;
-};
-
-HgemmWorkspaceStats get_hgemm_workspace_stats();
-void reset_hgemm_workspace_stats();
-
-} // namespace testing
-#endif
 
 } /* namespace nntrainer::x86 */
 
