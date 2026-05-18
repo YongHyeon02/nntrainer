@@ -1457,6 +1457,56 @@ TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_zero_k_beta_cases) {
   }
 }
 
+TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_prime_size_all_transposes) {
+  struct Case {
+    bool trans_a;
+    bool trans_b;
+  };
+
+  const std::vector<Case> cases = {
+    {false, false}, {false, true}, {true, false}, {true, true}};
+  for (const auto &tc : cases) {
+    SCOPED_TRACE("TransA=" + std::to_string(tc.trans_a) +
+                 " TransB=" + std::to_string(tc.trans_b));
+    run_sgemm_fp16_hgemm_test(97, 53, 71, tc.trans_a, tc.trans_b, 0.75F,
+                              -0.25F);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_small_tile_cases) {
+  run_sgemm_fp16_hgemm_test(1, 1, 1, false, false, 1.0F, 0.0F);
+  run_sgemm_fp16_hgemm_test(5, 15, 7, false, false, 1.25F, -0.5F);
+  run_sgemm_fp16_hgemm_test(5, 15, 7, true, true, -0.75F, 1.0F);
+}
+
+TEST(nntrainer_cpu_backend_standalone,
+     sgemm_fp16_padded_lda_ldb_ldc_all_transposes) {
+  struct Case {
+    bool trans_a;
+    bool trans_b;
+    float alpha;
+    float beta;
+    unsigned int lda_extra;
+    unsigned int ldb_extra;
+    unsigned int ldc_extra;
+  };
+
+  const std::vector<Case> cases = {
+    {false, false, 1.0F, 0.0F, 4, 7, 5},
+    {false, true, -0.5F, 0.125F, 6, 2, 1},
+    {true, false, 0.75F, -0.25F, 3, 8, 4},
+    {true, true, -1.25F, 0.5F, 5, 3, 6},
+  };
+
+  for (const auto &tc : cases) {
+    SCOPED_TRACE("TransA=" + std::to_string(tc.trans_a) +
+                 " TransB=" + std::to_string(tc.trans_b));
+    run_sgemm_fp16_hgemm_test(13, 33, 65, tc.trans_a, tc.trans_b, tc.alpha,
+                              tc.beta, tc.lda_extra, tc.ldb_extra,
+                              tc.ldc_extra);
+  }
+}
+
 int main(int argc, char **argv) {
   int result = -1;
 
