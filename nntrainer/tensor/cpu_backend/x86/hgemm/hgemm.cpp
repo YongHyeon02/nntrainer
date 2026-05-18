@@ -22,6 +22,69 @@ namespace nntrainer::x86 {
 
 namespace {
 
+struct HgemmWorkspace {
+  ~HgemmWorkspace() {
+    aligned_free(pack_b);
+    aligned_free(pack_a);
+    aligned_free(c32);
+  }
+
+  HgemmWorkspace() = default;
+  HgemmWorkspace(const HgemmWorkspace &) = delete;
+  HgemmWorkspace &operator=(const HgemmWorkspace &) = delete;
+
+  float *ensure_c32(std::size_t required) {
+    return ensure_buffer(c32, c32_capacity, c32_realloc_count, required);
+  }
+
+  float *ensure_pack_a(std::size_t required) {
+    return ensure_buffer(pack_a, pack_a_capacity, pack_a_realloc_count,
+                         required);
+  }
+
+  float *ensure_pack_b(std::size_t required) {
+    return ensure_buffer(pack_b, pack_b_capacity, pack_b_realloc_count,
+                         required);
+  }
+
+  void reset_realloc_counts() {
+    c32_realloc_count = 0;
+    pack_a_realloc_count = 0;
+    pack_b_realloc_count = 0;
+  }
+
+  float *c32 = nullptr;
+  float *pack_a = nullptr;
+  float *pack_b = nullptr;
+  std::size_t c32_capacity = 0;
+  std::size_t pack_a_capacity = 0;
+  std::size_t pack_b_capacity = 0;
+  std::size_t c32_realloc_count = 0;
+  std::size_t pack_a_realloc_count = 0;
+  std::size_t pack_b_realloc_count = 0;
+
+private:
+  static float *ensure_buffer(float *&buffer, std::size_t &capacity,
+                              std::size_t &realloc_count,
+                              std::size_t required) {
+    if (required <= capacity) {
+      return buffer;
+    }
+
+    float *next = aligned_alloc_f32(required);
+    aligned_free(buffer);
+    buffer = next;
+    capacity = required;
+    ++realloc_count;
+    return buffer;
+  }
+};
+
+HgemmWorkspace &get_hgemm_workspace() {
+  thread_local HgemmWorkspace workspace;
+  return workspace;
+}
+
 void hgemm_compute(bool TransA, bool TransB, unsigned int M, unsigned int N,
                    unsigned int K, float alpha, const _FP16 *A,
                    unsigned int a_stride, const _FP16 *B,
@@ -42,8 +105,10 @@ void hgemm_compute(bool TransA, bool TransB, unsigned int M, unsigned int N,
   // packing routines) and ignored on writeback.
   const unsigned int N_pad = round_up(N, X86_HGEMM_NR);
   const unsigned int M_pad = round_up(M, X86_HGEMM_MR);
+  HgemmWorkspace &workspace = get_hgemm_workspace();
 
-  float *C32 = aligned_alloc_f32(static_cast<std::size_t>(M_pad) * N_pad);
+  float *C32 =
+    workspace.ensure_c32(static_cast<std::size_t>(M_pad) * N_pad);
   std::memset(C32, 0, static_cast<std::size_t>(M_pad) * N_pad * sizeof(float));
 
   copy_C_to_C32(C, C32, M, N, c_stride, N_pad, beta);
@@ -58,8 +123,8 @@ void hgemm_compute(bool TransA, bool TransB, unsigned int M, unsigned int N,
     static_cast<std::size_t>(X86_HGEMM_K_BLOCKING) *
     round_up(X86_HGEMM_N_BLOCKING, X86_HGEMM_NR);
 
-  float *sa = aligned_alloc_f32(sa_capacity);
-  float *sb = aligned_alloc_f32(sb_capacity);
+  float *sa = workspace.ensure_pack_a(sa_capacity);
+  float *sb = workspace.ensure_pack_b(sb_capacity);
 
   // Pass the *actual* (M, N) to the kernel; the packing routines cap their
   // reads at (M, N) and zero-pad up to the (MR, NR) tile boundary. Kernel
@@ -68,10 +133,6 @@ void hgemm_compute(bool TransA, bool TransB, unsigned int M, unsigned int N,
                        b_stride, C32, N_pad, sa, sb);
 
   copy_C32_to_C(C32, C, M, N, N_pad, c_stride);
-
-  aligned_free(sb);
-  aligned_free(sa);
-  aligned_free(C32);
 }
 
 } // namespace
@@ -82,5 +143,33 @@ void hgemm(const _FP16 *A, const _FP16 *B, _FP16 *C, unsigned int M,
            bool TransB) {
   hgemm_compute(TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
 }
+
+#ifdef ENABLE_TEST
+namespace testing {
+
+HgemmWorkspaceStats get_hgemm_workspace_stats() {
+  const HgemmWorkspace &workspace = get_hgemm_workspace();
+  HgemmWorkspaceStats stats;
+  stats.c32_capacity = workspace.c32_capacity;
+  stats.pack_a_capacity = workspace.pack_a_capacity;
+  stats.pack_b_capacity = workspace.pack_b_capacity;
+  stats.c32_realloc_count = workspace.c32_realloc_count;
+  stats.pack_a_realloc_count = workspace.pack_a_realloc_count;
+  stats.pack_b_realloc_count = workspace.pack_b_realloc_count;
+  stats.total_realloc_count = stats.c32_realloc_count +
+                              stats.pack_a_realloc_count +
+                              stats.pack_b_realloc_count;
+  stats.total_capacity_bytes =
+    (stats.c32_capacity + stats.pack_a_capacity + stats.pack_b_capacity) *
+    sizeof(float);
+  return stats;
+}
+
+void reset_hgemm_workspace_stats() {
+  get_hgemm_workspace().reset_realloc_counts();
+}
+
+} // namespace testing
+#endif
 
 } /* namespace nntrainer::x86 */
