@@ -15,6 +15,10 @@
 #include "kleidiai_interface.h"
 #endif
 #include "nntrainer_test_util.h"
+#if defined(ENABLE_TEST) && (defined(__x86_64__) || defined(_M_X64))
+#include <hgemm.h>
+#define X86_HGEMM_WORKSPACE_STATS_AVAILABLE 1
+#endif
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -1506,6 +1510,46 @@ TEST(nntrainer_cpu_backend_standalone,
                               tc.ldc_extra);
   }
 }
+
+#ifdef X86_HGEMM_WORKSPACE_STATS_AVAILABLE
+TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_workspace_reuse_warmed_shape) {
+  run_sgemm_fp16_hgemm_test(64, 64, 64);
+
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
+  run_sgemm_fp16_hgemm_test(64, 64, 64);
+  auto same_stats = nntrainer::x86::testing::get_hgemm_workspace_stats();
+  EXPECT_EQ(same_stats.total_realloc_count, 0u);
+
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
+  run_sgemm_fp16_hgemm_test(7, 17, 33);
+  auto smaller_stats = nntrainer::x86::testing::get_hgemm_workspace_stats();
+  EXPECT_EQ(smaller_stats.total_realloc_count, 0u);
+}
+
+TEST(nntrainer_cpu_backend_standalone,
+     sgemm_fp16_workspace_no_allocation_for_degenerate_paths) {
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
+  run_sgemm_fp16_hgemm_test(13, 33, 65, false, false, 0.0F, 0.5F);
+  auto alpha_zero_stats =
+    nntrainer::x86::testing::get_hgemm_workspace_stats();
+  EXPECT_EQ(alpha_zero_stats.total_realloc_count, 0u);
+
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
+  run_sgemm_fp16_hgemm_test(13, 33, 0, false, false, 1.0F, -0.5F);
+  auto k_zero_stats = nntrainer::x86::testing::get_hgemm_workspace_stats();
+  EXPECT_EQ(k_zero_stats.total_realloc_count, 0u);
+
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
+  run_sgemm_fp16_hgemm_test(0, 33, 65, false, false, 1.0F, 0.0F);
+  auto m_zero_stats = nntrainer::x86::testing::get_hgemm_workspace_stats();
+  EXPECT_EQ(m_zero_stats.total_realloc_count, 0u);
+
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
+  run_sgemm_fp16_hgemm_test(13, 0, 65, false, false, 1.0F, 0.0F);
+  auto n_zero_stats = nntrainer::x86::testing::get_hgemm_workspace_stats();
+  EXPECT_EQ(n_zero_stats.total_realloc_count, 0u);
+}
+#endif
 
 int main(int argc, char **argv) {
   int result = -1;
