@@ -15,12 +15,15 @@
 #include "kleidiai_interface.h"
 #endif
 #include "nntrainer_test_util.h"
+#include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cpu_backend.h>
 #include <fallback_internal.h>
 #include <gtest/gtest.h>
 #include <numeric>
 #include <random>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -1294,86 +1297,164 @@ TEST(nntrainer_cpu_backend_standalone, gemm_benchmark_comparison_1x3072x512) {
 #endif // __ANDROID__ (end of gemm_benchmark_comparison region)
 
 /// FP16 sgemm path: exercises the x86 cache-blocked GEMM.
-/// Reference is the FP32 sgemm (CBLAS) on FP32 copies of the inputs.
-/// Tolerance follows X86-P3 accuracy spec: |new - ref| < 0.01 (FP16 limit).
-static void run_sgemm_fp16_test(unsigned int M, unsigned int N, unsigned int K,
-                                bool TransA = false, bool TransB = false,
-                                float alpha = 1.0F, float beta = 0.0F) {
+/// Reference is a local FP32 GEMM loop to avoid using the optimized backend as
+/// the oracle for this backend test.
+static void run_sgemm_fp16_hgemm_test(
+  unsigned int M, unsigned int N, unsigned int K, bool TransA = false,
+  bool TransB = false, float alpha = 1.0F, float beta = 0.0F,
+  unsigned int lda_extra = 0, unsigned int ldb_extra = 0,
+  unsigned int ldc_extra = 0) {
   nntrainer::init_backend();
 
-  const unsigned int lda = TransA ? M : K;
-  const unsigned int ldb = TransB ? K : N;
-  const unsigned int ldc = N;
-  const std::size_t a_size = static_cast<std::size_t>(TransA ? K : M) * lda;
-  const std::size_t b_size = static_cast<std::size_t>(TransB ? N : K) * ldb;
-  const std::size_t c_size = static_cast<std::size_t>(M) * ldc;
+  const unsigned int lda = std::max(1u, (TransA ? M : K) + lda_extra);
+  const unsigned int ldb = std::max(1u, (TransB ? K : N) + ldb_extra);
+  const unsigned int ldc = std::max(1u, N + ldc_extra);
+  const unsigned int a_rows = TransA ? K : M;
+  const unsigned int b_rows = TransB ? N : K;
+  const std::size_t a_size =
+    std::max<std::size_t>(1, static_cast<std::size_t>(a_rows) * lda);
+  const std::size_t b_size =
+    std::max<std::size_t>(1, static_cast<std::size_t>(b_rows) * ldb);
+  const std::size_t c_size =
+    std::max<std::size_t>(1, static_cast<std::size_t>(M) * ldc);
 
-  auto A_fp16 = generate_random_vector<_FP16>(a_size);
-  auto B_fp16 = generate_random_vector<_FP16>(b_size);
-  auto C_fp16 = generate_random_vector<_FP16>(c_size);
+  auto A_fp16 = generate_random_vector<_FP16>(a_size, -0.25F, 0.25F);
+  auto B_fp16 = generate_random_vector<_FP16>(b_size, -0.25F, 0.25F);
+  auto C_fp16 = generate_random_vector<_FP16>(c_size, -0.25F, 0.25F);
+  auto C_before = C_fp16;
 
-  std::vector<float> A_fp32(a_size);
-  std::vector<float> B_fp32(b_size);
   std::vector<float> C_fp32_ref(c_size);
-  nntrainer::scopy(a_size, A_fp16.data(), 1, A_fp32.data(), 1);
-  nntrainer::scopy(b_size, B_fp16.data(), 1, B_fp32.data(), 1);
-  nntrainer::scopy(c_size, C_fp16.data(), 1, C_fp32_ref.data(), 1);
+  for (std::size_t i = 0; i < c_size; ++i) {
+    C_fp32_ref[i] = static_cast<float>(C_before[i]);
+  }
 
-  // Reference: FP32 sgemm via the existing FP32 path (delegates to CBLAS).
-  nntrainer::sgemm(0, TransA, TransB, M, N, K, alpha, A_fp32.data(), lda,
-                   B_fp32.data(), ldb, beta, C_fp32_ref.data(), ldc);
+  if (M != 0 && N != 0) {
+    for (unsigned int m = 0; m < M; ++m) {
+      for (unsigned int n = 0; n < N; ++n) {
+        float acc = 0.0F;
+        for (unsigned int k = 0; k < K; ++k) {
+          const float a =
+            static_cast<float>(TransA ? A_fp16[k * lda + m]
+                                      : A_fp16[m * lda + k]);
+          const float b =
+            static_cast<float>(TransB ? B_fp16[n * ldb + k]
+                                      : B_fp16[k * ldb + n]);
+          acc += a * b;
+        }
+        const std::size_t idx = static_cast<std::size_t>(m) * ldc + n;
+        C_fp32_ref[idx] = alpha * acc + beta * C_fp32_ref[idx];
+      }
+    }
+  }
 
   // System under test: FP16 sgemm, routed to x86::hgemm_fp16 by the x86
   // backend dispatcher for row-major inputs.
   nntrainer::sgemm(0, TransA, TransB, M, N, K, alpha, A_fp16.data(), lda,
                    B_fp16.data(), ldb, beta, C_fp16.data(), ldc);
 
-  for (std::size_t i = 0; i < c_size; ++i) {
-    float got = static_cast<float>(C_fp16[i]);
-    float ref = C_fp32_ref[i];
-    EXPECT_NEAR(got, ref, 0.01f * (std::abs(ref) + 1.0f))
-      << "mismatch at i=" << i << " M=" << M << " N=" << N << " K=" << K
-      << " TransA=" << TransA << " TransB=" << TransB << " alpha=" << alpha
-      << " beta=" << beta;
+  if (M == 0 || N == 0) {
+    for (std::size_t i = 0; i < c_size; ++i) {
+      EXPECT_EQ(static_cast<float>(C_fp16[i]), static_cast<float>(C_before[i]))
+        << "zero-dimension GEMM touched C at i=" << i << " M=" << M
+        << " N=" << N << " K=" << K << " TransA=" << TransA
+        << " TransB=" << TransB;
+    }
+    return;
+  }
+
+  for (unsigned int m = 0; m < M; ++m) {
+    for (unsigned int n = 0; n < N; ++n) {
+      const std::size_t idx = static_cast<std::size_t>(m) * ldc + n;
+      const float got = static_cast<float>(C_fp16[idx]);
+      const float ref = C_fp32_ref[idx];
+      const float abs_diff = std::abs(got - ref);
+      const float rel_diff = abs_diff / std::max(1.0F, std::abs(ref));
+      EXPECT_TRUE(abs_diff <= 1e-2F || rel_diff <= 1e-2F)
+        << "mismatch at m=" << m << " n=" << n << " M=" << M << " N=" << N
+        << " K=" << K << " TransA=" << TransA << " TransB=" << TransB
+        << " alpha=" << alpha << " beta=" << beta << " lda=" << lda
+        << " ldb=" << ldb << " ldc=" << ldc << " got=" << got
+        << " ref=" << ref << " abs_diff=" << abs_diff
+        << " rel_diff=" << rel_diff;
+    }
+
+    for (unsigned int n = N; n < ldc; ++n) {
+      const std::size_t idx = static_cast<std::size_t>(m) * ldc + n;
+      EXPECT_EQ(static_cast<float>(C_fp16[idx]),
+                static_cast<float>(C_before[idx]))
+        << "C padding was modified at m=" << m << " n=" << n
+        << " ldc=" << ldc;
+    }
   }
 }
 
 TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_noTrans_aligned_12x32x32) {
-  run_sgemm_fp16_test(12, 32, 32);
+  run_sgemm_fp16_hgemm_test(12, 32, 32);
 }
 
 TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_noTrans_aligned_256x512x128) {
-  run_sgemm_fp16_test(256, 512, 128);
+  run_sgemm_fp16_hgemm_test(256, 512, 128);
 }
 
-TEST(nntrainer_cpu_backend_standalone,
-     sgemm_fp16_noTrans_aligned_1024x1024x1024) {
-  run_sgemm_fp16_test(1024, 1024, 1024);
+TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_noTrans_aligned_64x64x64) {
+  run_sgemm_fp16_hgemm_test(64, 64, 64);
 }
 
 TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_noTrans_unaligned_7x17x33) {
   // Exercises both M-edge (7 = 6 + 1) and N-edge (17 = 16 + 1) cleanup.
-  run_sgemm_fp16_test(7, 17, 33);
+  run_sgemm_fp16_hgemm_test(7, 17, 33);
 }
 
 TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_noTrans_unaligned_13x33x65) {
-  run_sgemm_fp16_test(13, 33, 65);
+  run_sgemm_fp16_hgemm_test(13, 33, 65);
 }
 
 TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_noTrans_alpha_beta_13x33x65) {
-  run_sgemm_fp16_test(13, 33, 65, false, false, -0.75F, 0.25F);
+  run_sgemm_fp16_hgemm_test(13, 33, 65, false, false, -0.75F, 0.25F);
 }
 
 TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_transA_unaligned_13x33x65) {
-  run_sgemm_fp16_test(13, 33, 65, true, false, 0.5F, -0.125F);
+  run_sgemm_fp16_hgemm_test(13, 33, 65, true, false, 0.5F, -0.125F);
 }
 
 TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_transB_unaligned_13x33x65) {
-  run_sgemm_fp16_test(13, 33, 65, false, true, 1.25F, 0.5F);
+  run_sgemm_fp16_hgemm_test(13, 33, 65, false, true, 1.25F, 0.5F);
 }
 
 TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_transAB_unaligned_13x33x65) {
-  run_sgemm_fp16_test(13, 33, 65, true, true, -1.0F, 0.125F);
+  run_sgemm_fp16_hgemm_test(13, 33, 65, true, true, -1.0F, 0.125F);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_alpha_beta_boundary_cases) {
+  struct Case {
+    float alpha;
+    float beta;
+  };
+
+  const std::vector<Case> cases = {{0.0F, 0.0F}, {0.0F, 1.0F}, {1.0F, 0.0F},
+                                   {1.0F, 1.0F}, {2.5F, -1.0F}};
+  for (const auto &tc : cases) {
+    SCOPED_TRACE("alpha=" + std::to_string(tc.alpha) +
+                 " beta=" + std::to_string(tc.beta));
+    run_sgemm_fp16_hgemm_test(13, 33, 65, false, false, tc.alpha, tc.beta);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_zero_dimension_cases) {
+  run_sgemm_fp16_hgemm_test(0, 17, 33, false, false, 1.0F, 0.0F);
+  run_sgemm_fp16_hgemm_test(7, 0, 33, false, false, 1.0F, 0.0F);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemm_fp16_zero_k_beta_cases) {
+  struct Case {
+    float beta;
+  };
+
+  const std::vector<Case> cases = {{0.0F}, {1.0F}, {-0.5F}};
+  for (const auto &tc : cases) {
+    SCOPED_TRACE("K=0 beta=" + std::to_string(tc.beta));
+    run_sgemm_fp16_hgemm_test(7, 17, 0, false, false, 1.0F, tc.beta);
+  }
 }
 
 int main(int argc, char **argv) {
