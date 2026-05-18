@@ -67,4 +67,27 @@ void copy_C32_to_C(const float *C32, _FP16 *C, unsigned int M, unsigned int N,
   }
 }
 
+void apply_beta_to_C(_FP16 *C, unsigned int M, unsigned int N,
+                     unsigned int c_stride, float beta) {
+  if (std::fpclassify(beta) == FP_ZERO) {
+    for (unsigned int m = 0; m < M; ++m) {
+      for (unsigned int n = 0; n < N; ++n) {
+        C[m * c_stride + n] = static_cast<_FP16>(0.0F);
+      }
+    }
+    return;
+  }
+
+  if (beta == 1.0F) {
+    return;
+  }
+
+  for (unsigned int m = 0; m < M; ++m) {
+    for (unsigned int n = 0; n < N; ++n) {
+      const std::size_t idx = static_cast<std::size_t>(m) * c_stride + n;
+      C[idx] = static_cast<_FP16>(beta * static_cast<float>(C[idx]));
+    }
+  }
+}
+
 } /* namespace nntrainer::x86 */

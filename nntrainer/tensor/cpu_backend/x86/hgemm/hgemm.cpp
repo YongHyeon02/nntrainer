@@ -31,6 +31,11 @@ void hgemm_compute(bool TransA, bool TransB, unsigned int M, unsigned int N,
     return;
   }
 
+  if (K == 0 || std::fpclassify(alpha) == FP_ZERO) {
+    apply_beta_to_C(C, M, N, c_stride, beta);
+    return;
+  }
+
   // C32 is padded on both axes so the kernel can store full 6x16 tiles even
   // when (M, N) are not multiples of (MR, NR). Tail rows / cols are written
   // with zero contributions (packed A / B at the edges is zero-padded by the
@@ -42,12 +47,6 @@ void hgemm_compute(bool TransA, bool TransB, unsigned int M, unsigned int N,
   std::memset(C32, 0, static_cast<std::size_t>(M_pad) * N_pad * sizeof(float));
 
   copy_C_to_C32(C, C32, M, N, c_stride, N_pad, beta);
-
-  if (K == 0 || std::fpclassify(alpha) == FP_ZERO) {
-    copy_C32_to_C(C32, C, M, N, N_pad, c_stride);
-    aligned_free(C32);
-    return;
-  }
 
   // Packing buffers sized for one M-block of A and one N-block of B,
   // both at the deepest K-block. Capacity uses M_pad/N_pad in case M_BLOCKING
