@@ -148,6 +148,36 @@ void packing_B_N16(unsigned int k_min, unsigned int n_actual,
 void packing_B_N16_trans(unsigned int k_min, unsigned int n_actual,
                          const _FP16 *src, unsigned int src_stride,
                          float *dst) {
+  if (n_actual == X86_HGEMM_NR) {
+    // Fast path: per n-row, k runs unit-stride. SIMD-convert 8 contiguous
+    // FP16 k-elements per row, then transpose into k-major NR-tile layout
+    // via scalar scatter store. Mirrors packing_A_M6 fast path.
+    unsigned int k = 0;
+    alignas(32) float tmp[X86_HGEMM_NR][8];
+    for (; k + 8 <= k_min; k += 8) {
+      for (unsigned int nr = 0; nr < X86_HGEMM_NR; ++nr) {
+        __m128i b16 = _mm_loadu_si128(
+          reinterpret_cast<const __m128i *>(src + nr * src_stride + k));
+        __m256 b32 = _mm256_cvtph_ps(b16);
+        _mm256_store_ps(tmp[nr], b32);
+      }
+      for (unsigned int koff = 0; koff < 8; ++koff) {
+        float *out = dst + (k + koff) * X86_HGEMM_NR;
+        for (unsigned int nr = 0; nr < X86_HGEMM_NR; ++nr) {
+          out[nr] = tmp[nr][koff];
+        }
+      }
+    }
+    for (; k < k_min; ++k) {
+      float *out = dst + k * X86_HGEMM_NR;
+      for (unsigned int n = 0; n < X86_HGEMM_NR; ++n) {
+        out[n] = static_cast<float>(src[n * src_stride + k]);
+      }
+    }
+    return;
+  }
+
+  // Edge path: n_actual in [1, NR). Pad missing cols with 0.
   for (unsigned int k = 0; k < k_min; ++k) {
     float *out = dst + k * X86_HGEMM_NR;
     unsigned int n = 0;
