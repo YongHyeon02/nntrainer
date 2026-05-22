@@ -1551,6 +1551,235 @@ TEST(nntrainer_cpu_backend_standalone,
 }
 #endif
 
+/// FP16 sgemv path: exercises the x86 AVX2 hgemv kernel.
+/// Reference is a local FP32 GEMV loop to avoid using the optimized backend
+/// as the oracle for this backend test.
+static void run_sgemv_fp16_hgemv_test(
+  unsigned int M, unsigned int N, bool TransA = false, float alpha = 1.0F,
+  float beta = 0.0F, unsigned int lda_extra = 0, unsigned int incX = 1,
+  unsigned int incY = 1) {
+  nntrainer::init_backend();
+
+  const unsigned int lda = std::max(1u, N + lda_extra);
+  const unsigned int lenX = TransA ? M : N;
+  const unsigned int lenY = TransA ? N : M;
+
+  const std::size_t a_size =
+    std::max<std::size_t>(1, static_cast<std::size_t>(M) * lda);
+  const std::size_t x_size = std::max<std::size_t>(
+    1, static_cast<std::size_t>(lenX) * std::max(incX, 1u));
+  const std::size_t y_size = std::max<std::size_t>(
+    1, static_cast<std::size_t>(lenY) * std::max(incY, 1u));
+
+  auto A_fp16 = generate_random_vector<_FP16>(a_size, -0.25F, 0.25F);
+  auto X_fp16 = generate_random_vector<_FP16>(x_size, -0.25F, 0.25F);
+  auto Y_fp16 = generate_random_vector<_FP16>(y_size, -0.25F, 0.25F);
+  auto Y_before = Y_fp16;
+
+  std::vector<float> Y_fp32_ref(y_size);
+  for (std::size_t i = 0; i < y_size; ++i) {
+    Y_fp32_ref[i] = static_cast<float>(Y_before[i]);
+  }
+
+  if (M != 0 && N != 0) {
+    if (!TransA) {
+      for (unsigned int i = 0; i < M; ++i) {
+        float acc = 0.0F;
+        for (unsigned int j = 0; j < N; ++j) {
+          acc += static_cast<float>(A_fp16[i * lda + j]) *
+                 static_cast<float>(X_fp16[j * incX]);
+        }
+        const std::size_t y_idx = static_cast<std::size_t>(i) * incY;
+        Y_fp32_ref[y_idx] = alpha * acc + beta * Y_fp32_ref[y_idx];
+      }
+    } else {
+      for (unsigned int j = 0; j < N; ++j) {
+        float acc = 0.0F;
+        for (unsigned int i = 0; i < M; ++i) {
+          acc += static_cast<float>(A_fp16[i * lda + j]) *
+                 static_cast<float>(X_fp16[i * incX]);
+        }
+        const std::size_t y_idx = static_cast<std::size_t>(j) * incY;
+        Y_fp32_ref[y_idx] = alpha * acc + beta * Y_fp32_ref[y_idx];
+      }
+    }
+  }
+
+  // System under test: FP16 sgemv, routed to x86::hgemv by the x86 backend
+  // dispatcher for row-major inputs.
+  nntrainer::sgemv(0, TransA, M, N, alpha, A_fp16.data(), lda, X_fp16.data(),
+                   incX, beta, Y_fp16.data(), incY);
+
+  if (M == 0 || N == 0) {
+    for (std::size_t i = 0; i < y_size; ++i) {
+      EXPECT_EQ(static_cast<float>(Y_fp16[i]), static_cast<float>(Y_before[i]))
+        << "zero-dimension GEMV touched Y at i=" << i << " M=" << M
+        << " N=" << N << " TransA=" << TransA;
+    }
+    return;
+  }
+
+  for (unsigned int k = 0; k < lenY; ++k) {
+    const std::size_t y_idx = static_cast<std::size_t>(k) * incY;
+    const float got = static_cast<float>(Y_fp16[y_idx]);
+    const float ref = Y_fp32_ref[y_idx];
+    const float abs_diff = std::abs(got - ref);
+    const float rel_diff = abs_diff / std::max(1.0F, std::abs(ref));
+    EXPECT_TRUE(abs_diff <= 1e-2F || rel_diff <= 1e-2F)
+      << "mismatch at k=" << k << " M=" << M << " N=" << N
+      << " TransA=" << TransA << " alpha=" << alpha << " beta=" << beta
+      << " lda=" << lda << " incX=" << incX << " incY=" << incY
+      << " got=" << got << " ref=" << ref << " abs_diff=" << abs_diff
+      << " rel_diff=" << rel_diff;
+  }
+
+  // Y gap slots (only present when incY > 1) must be untouched.
+  if (incY > 1) {
+    for (unsigned int k = 0; k < lenY; ++k) {
+      const std::size_t base = static_cast<std::size_t>(k) * incY;
+      for (unsigned int g = 1; g < incY; ++g) {
+        const std::size_t gap_idx = base + g;
+        if (gap_idx >= y_size) {
+          break;
+        }
+        EXPECT_EQ(static_cast<float>(Y_fp16[gap_idx]),
+                  static_cast<float>(Y_before[gap_idx]))
+          << "Y gap was modified at idx=" << gap_idx << " k=" << k
+          << " g=" << g << " incY=" << incY;
+      }
+    }
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_noTrans_aligned_8x64) {
+  // N multiple of 16: 16-element main loop only, no tails.
+  run_sgemv_fp16_hgemv_test(8, 64);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_noTrans_aligned_16x128) {
+  run_sgemv_fp16_hgemv_test(16, 128);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_noTrans_n8_tail_5x24) {
+  // N=24 = 16 + 8: exercises the 8-element tail after the 16-element loop.
+  run_sgemv_fp16_hgemv_test(5, 24);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_noTrans_scalar_tail_7x31) {
+  // N=31 = 16 + 8 + 7: exercises 16-loop, 8-tail, then scalar tail of 7.
+  run_sgemv_fp16_hgemv_test(7, 31);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_noTrans_scalar_tail_only_5x9) {
+  // N=9: skips 16-loop and 8-tail, scalar tail of 9.
+  run_sgemv_fp16_hgemv_test(5, 9);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_transA_aligned_16x64) {
+  run_sgemv_fp16_hgemv_test(16, 64, true);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_transA_unaligned_13x33) {
+  // M=13 (AXPY row sweep tail), N=33 (8-element tail + scalar tail in
+  // the FP32-scratch axpy update).
+  run_sgemv_fp16_hgemv_test(13, 33, true);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_noTrans_alpha_beta_13x33) {
+  run_sgemv_fp16_hgemv_test(13, 33, false, -0.75F, 0.25F);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_transA_alpha_beta_13x33) {
+  run_sgemv_fp16_hgemv_test(13, 33, true, 0.5F, -0.125F);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_strided_lda_noTrans_7x17) {
+  // lda = N + 7: row-padded A.
+  run_sgemv_fp16_hgemv_test(7, 17, false, 1.0F, 0.0F, 7);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_strided_lda_transA_7x17) {
+  run_sgemv_fp16_hgemv_test(7, 17, true, 1.0F, 0.0F, 7);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_strided_incX_noTrans_7x17) {
+  // incX=2 forces the non-contiguous X path.
+  run_sgemv_fp16_hgemv_test(7, 17, false, 1.0F, 0.0F, 0, 2, 1);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_strided_incY_noTrans_7x17) {
+  // incY=3 exercises Y-gap preservation in the writeback path.
+  run_sgemv_fp16_hgemv_test(7, 17, false, 1.0F, 0.0F, 0, 1, 3);
+}
+
+TEST(nntrainer_cpu_backend_standalone,
+     sgemv_fp16_strided_lda_incX_incY_transA_7x17) {
+  // All three strides at once on the TransA path (non-contiguous Y32 init,
+  // non-contiguous incX read, non-contiguous incY writeback).
+  run_sgemv_fp16_hgemv_test(7, 17, true, 0.5F, -0.25F, 3, 2, 4);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_alpha_beta_boundary_cases) {
+  struct Case {
+    float alpha;
+    float beta;
+  };
+
+  const std::vector<Case> cases = {{0.0F, 0.0F}, {0.0F, 1.0F}, {1.0F, 0.0F},
+                                   {1.0F, 1.0F}, {2.5F, -1.0F}};
+  for (const auto &tc : cases) {
+    SCOPED_TRACE("alpha=" + std::to_string(tc.alpha) +
+                 " beta=" + std::to_string(tc.beta));
+    run_sgemv_fp16_hgemv_test(13, 33, false, tc.alpha, tc.beta);
+    run_sgemv_fp16_hgemv_test(13, 33, true, tc.alpha, tc.beta);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_zero_dimension_cases) {
+  run_sgemv_fp16_hgemv_test(0, 17, false, 1.0F, 0.0F);
+  run_sgemv_fp16_hgemv_test(7, 0, false, 1.0F, 0.0F);
+  run_sgemv_fp16_hgemv_test(0, 17, true, 1.0F, 0.0F);
+  run_sgemv_fp16_hgemv_test(7, 0, true, 1.0F, 0.0F);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_single_row_or_col) {
+  run_sgemv_fp16_hgemv_test(1, 33, false);
+  run_sgemv_fp16_hgemv_test(33, 1, false);
+  run_sgemv_fp16_hgemv_test(1, 33, true);
+  run_sgemv_fp16_hgemv_test(33, 1, true);
+}
+
+TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_beta_zero_does_not_read_Y) {
+  // BLAS rule: when beta == 0, Y must not be read. Seed Y with NaN; if the
+  // kernel reads it, NaN propagates into the result.
+  nntrainer::init_backend();
+
+  const _FP16 nan_v = static_cast<_FP16>(std::nan(""));
+
+  auto check_path = [&](bool TransA) {
+    const unsigned int M = 7;
+    const unsigned int N = 17;
+    const unsigned int lenY = TransA ? N : M;
+
+    auto A = generate_random_vector<_FP16>(M * N, -0.25F, 0.25F);
+    auto X = generate_random_vector<_FP16>(TransA ? M : N, -0.25F, 0.25F);
+    std::vector<_FP16> Y(lenY, nan_v);
+
+    nntrainer::sgemv(0, TransA, M, N, 1.0F, A.data(), N, X.data(), 1, 0.0F,
+                     Y.data(), 1);
+
+    for (unsigned int k = 0; k < lenY; ++k) {
+      const float yv = static_cast<float>(Y[k]);
+      EXPECT_FALSE(std::isnan(yv))
+        << "beta=0 path read NaN-seeded Y at k=" << k
+        << " TransA=" << TransA << " value=" << yv;
+    }
+  };
+
+  check_path(false);
+  check_path(true);
+}
+
 int main(int argc, char **argv) {
   int result = -1;
 
