@@ -4,6 +4,7 @@ x86_hgemm_headers = [
   'hgemm_noTrans.h',
   'hgemm_pack.h',
   'hgemm_util.h',
+  'hgemv.h',
 ]
 
 subdir('hgemm_kernel')
@@ -15,6 +16,7 @@ x86_hgemm_sources = [
   'hgemm_noTrans.cpp',
   'hgemm_pack.cpp',
   'hgemm_util.cpp',
+  'hgemv.cpp',
 ]
 
 foreach s : x86_hgemm_sources

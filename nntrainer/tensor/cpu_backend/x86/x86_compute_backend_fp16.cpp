@@ -15,6 +15,7 @@
 #include <avx2_impl.h>
 #include <fallback_internal.h>
 #include <hgemm.h>
+#include <hgemv.h>
 #include <nntrainer_error.h>
 #include <tensor_dim.h>
 #include <x86_compute_backend.h>
@@ -189,6 +190,10 @@ void sgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,
            const unsigned int N, const float alpha, const _FP16 *A,
            const unsigned int lda, const _FP16 *X, const unsigned int incX,
            const float beta, _FP16 *Y, const unsigned int incY) {
+  if (TStorageOrder == ROW_MAJOR) {
+    nntrainer::x86::hgemv(A, X, Y, M, N, lda, incX, incY, alpha, beta, TransA);
+    return;
+  }
 #ifdef USE_BLAS
   unsigned int lenX = (TransA) ? 1 + (M - 1) * (incX) : 1 + (N - 1) * (incX);
   unsigned int lenY = (TransA) ? 1 + (N - 1) * (incY) : 1 + (M - 1) * (incY);
