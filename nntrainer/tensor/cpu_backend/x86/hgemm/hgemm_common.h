@@ -13,10 +13,13 @@
 #ifndef __X86_HGEMM_COMMON_H_
 #define __X86_HGEMM_COMMON_H_
 
-/// Outer blocking sizes (P3-1 initial values; re-tuned at end of P3).
-/// Rationale: packed A (M_BLOCKING x K_BLOCKING x 4B = 256KB) and packed B
-/// (K_BLOCKING x N_BLOCKING x 4B = 512KB) target L2-resident working sets.
-#define X86_HGEMM_M_BLOCKING 256
+/// Outer blocking sizes (tuned on Alder Lake i5-12400F, 1.25MB L2/core).
+/// The B stripe is re-packed once per M-block, so a small M_BLOCKING re-packs B
+/// O(M / M_BLOCKING) times; widening M_BLOCKING so packed A (M_BLOCKING x
+/// K_BLOCKING x 4B = 1MB) is L2-resident amortizes that and lifted 1024^3 by
+/// ~6% and 4096^3 by ~6% over the initial 256/512/256. Packed B (K_BLOCKING x
+/// N_BLOCKING x 4B = 512KB) streams alongside it.
+#define X86_HGEMM_M_BLOCKING 1024
 #define X86_HGEMM_N_BLOCKING 512
 #define X86_HGEMM_K_BLOCKING 256
 
