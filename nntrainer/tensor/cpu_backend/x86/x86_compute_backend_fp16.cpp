@@ -33,6 +33,12 @@ void shgemm(const unsigned int TStorageOrder, bool TransA, bool TransB,
             const float alpha, const float *A, const unsigned int lda,
             const _FP16 *B, const unsigned int ldb, const float beta, float *C,
             const unsigned int ldc) {
+  if (TStorageOrder == ROW_MAJOR) {
+    nntrainer::x86::shgemm(A, B, C, M, N, K, lda, ldb, ldc, alpha, beta, TransA,
+                           TransB);
+    return;
+  }
+
   float *B_ = new float[N * K];
   scopy(N * K, B, 1, B_, 1);
 
@@ -51,6 +57,11 @@ void shgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,
             const unsigned int N, const float alpha, const float *A,
             const unsigned int lda, const _FP16 *X, const unsigned int incX,
             const float beta, float *Y, const unsigned int incY) {
+  if (TStorageOrder == ROW_MAJOR) {
+    avx2::shgemv(TransA, M, N, alpha, A, lda, X, incX, beta, Y, incY);
+    return;
+  }
+
   const unsigned int lenX =
     (TransA) ? 1 + (M - 1) * (incX) : 1 + (N - 1) * (incX);
 
@@ -74,6 +85,12 @@ void hsgemm(const unsigned int TStorageOrder, bool TransA, bool TransB,
             const float alpha, const _FP16 *A, const unsigned int lda,
             const float *B, const unsigned int ldb, const float beta, float *C,
             const unsigned int ldc) {
+  if (TStorageOrder == ROW_MAJOR) {
+    nntrainer::x86::hsgemm(A, B, C, M, N, K, lda, ldb, ldc, alpha, beta, TransA,
+                           TransB);
+    return;
+  }
+
   float *A_ = new float[M * K];
 
   scopy(M * K, A, 1, A_, 1);
@@ -93,6 +110,11 @@ void hsgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,
             const unsigned int N, const float alpha, const _FP16 *A,
             const unsigned int lda, const float *X, const unsigned int incX,
             const float beta, float *Y, const unsigned int incY) {
+  if (TStorageOrder == ROW_MAJOR) {
+    avx2::hsgemv(TransA, M, N, alpha, A, lda, X, incX, beta, Y, incY);
+    return;
+  }
+
   float *A_ = new float[M * N];
 
   scopy(M * N, A, 1, A_, 1);

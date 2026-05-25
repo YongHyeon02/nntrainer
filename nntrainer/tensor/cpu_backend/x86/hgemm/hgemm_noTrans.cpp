@@ -19,10 +19,11 @@
 
 namespace nntrainer::x86 {
 
+template <typename AType, typename BType>
 void hgemm_blocked_kernel(bool TransA, bool TransB, unsigned int M,
                           unsigned int N, unsigned int K, float alpha,
-                          const _FP16 *A, unsigned int a_stride,
-                          const _FP16 *B, unsigned int b_stride, float *C32,
+                          const AType *A, unsigned int a_stride, const BType *B,
+                          unsigned int b_stride, float *C32,
                           unsigned int c32_stride, float *sa, float *sb) {
   for (unsigned int ms = 0; ms < M; ms += X86_HGEMM_M_BLOCKING) {
     unsigned int m_min = std::min<unsigned int>(M - ms, X86_HGEMM_M_BLOCKING);
@@ -33,13 +34,11 @@ void hgemm_blocked_kernel(bool TransA, bool TransB, unsigned int M,
       // Pack a vertical stripe of A: m_min x k_min, in MR-tile blocks.
       // Layout: for each 6-row tile in order, store k_min * MR floats.
       for (unsigned int mm = 0; mm < m_min; mm += X86_HGEMM_MR) {
-        unsigned int m_act =
-          std::min<unsigned int>(m_min - mm, X86_HGEMM_MR);
+        unsigned int m_act = std::min<unsigned int>(m_min - mm, X86_HGEMM_MR);
         float *pa = sa + (mm / X86_HGEMM_MR) * (k_min * X86_HGEMM_MR);
         if (TransA) {
-          packing_A_M6_trans(m_act, k_min,
-                             A + ks * a_stride + (ms + mm), a_stride, alpha,
-                             pa);
+          packing_A_M6_trans(m_act, k_min, A + ks * a_stride + (ms + mm),
+                             a_stride, alpha, pa);
         } else {
           packing_A_M6(m_act, k_min, A + (ms + mm) * a_stride + ks, a_stride,
                        alpha, pa);
@@ -52,25 +51,22 @@ void hgemm_blocked_kernel(bool TransA, bool TransB, unsigned int M,
 
         // Pack a horizontal stripe of B: k_min x n_min, in NR-tile blocks.
         for (unsigned int nn = 0; nn < n_min; nn += X86_HGEMM_NR) {
-          unsigned int n_act =
-            std::min<unsigned int>(n_min - nn, X86_HGEMM_NR);
+          unsigned int n_act = std::min<unsigned int>(n_min - nn, X86_HGEMM_NR);
           float *pb = sb + (nn / X86_HGEMM_NR) * (k_min * X86_HGEMM_NR);
           if (TransB) {
-            packing_B_N16_trans(k_min, n_act,
-                                B + (ns + nn) * b_stride + ks, b_stride, pb);
+            packing_B_N16_trans(k_min, n_act, B + (ns + nn) * b_stride + ks,
+                                b_stride, pb);
           } else {
-            packing_B_N16(k_min, n_act, B + ks * b_stride + (ns + nn),
-                          b_stride, pb);
+            packing_B_N16(k_min, n_act, B + ks * b_stride + (ns + nn), b_stride,
+                          pb);
           }
         }
 
         // Inner GEMM: iterate MR-row tiles outer, NR-col tiles inner.
         for (unsigned int mm = 0; mm < m_min; mm += X86_HGEMM_MR) {
-          const float *pa =
-            sa + (mm / X86_HGEMM_MR) * (k_min * X86_HGEMM_MR);
+          const float *pa = sa + (mm / X86_HGEMM_MR) * (k_min * X86_HGEMM_MR);
           for (unsigned int nn = 0; nn < n_min; nn += X86_HGEMM_NR) {
-            const float *pb =
-              sb + (nn / X86_HGEMM_NR) * (k_min * X86_HGEMM_NR);
+            const float *pb = sb + (nn / X86_HGEMM_NR) * (k_min * X86_HGEMM_NR);
             float *c_tile = C32 + (ms + mm) * c32_stride + (ns + nn);
             hgemm_kernel_6x16(k_min, pa, pb, c_tile, c32_stride);
           }
@@ -79,5 +75,23 @@ void hgemm_blocked_kernel(bool TransA, bool TransB, unsigned int M,
     }
   }
 }
+
+// Explicit instantiations: pure FP16, shgemm (A=FP32, B=FP16) and hsgemm
+// (A=FP16, B=FP32). The micro-kernel always consumes FP32 packed buffers.
+template void
+hgemm_blocked_kernel<_FP16, _FP16>(bool, bool, unsigned int, unsigned int,
+                                   unsigned int, float, const _FP16 *,
+                                   unsigned int, const _FP16 *, unsigned int,
+                                   float *, unsigned int, float *, float *);
+template void
+hgemm_blocked_kernel<float, _FP16>(bool, bool, unsigned int, unsigned int,
+                                   unsigned int, float, const float *,
+                                   unsigned int, const _FP16 *, unsigned int,
+                                   float *, unsigned int, float *, float *);
+template void
+hgemm_blocked_kernel<_FP16, float>(bool, bool, unsigned int, unsigned int,
+                                   unsigned int, float, const _FP16 *,
+                                   unsigned int, const float *, unsigned int,
+                                   float *, unsigned int, float *, float *);
 
 } /* namespace nntrainer::x86 */

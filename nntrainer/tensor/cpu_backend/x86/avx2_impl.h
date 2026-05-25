@@ -109,6 +109,24 @@ void hgemv(bool TransA, const unsigned int M, const unsigned int N,
            const _Float16 *X, const unsigned int incX, const float beta,
            _Float16 *Y, const unsigned int incY);
 
+/**
+ * @brief Mixed-precision GEMV with FP32 matrix, FP16 vector and FP32 output
+ * (shgemv). Shares gemv_impl with hgemv; see hgemv for parameter semantics.
+ */
+void shgemv(bool TransA, const unsigned int M, const unsigned int N,
+            const float alpha, const float *A, const unsigned int lda,
+            const _Float16 *X, const unsigned int incX, const float beta,
+            float *Y, const unsigned int incY);
+
+/**
+ * @brief Mixed-precision GEMV with FP16 matrix, FP32 vector and FP32 output
+ * (hsgemv). Shares gemv_impl with hgemv; see hgemv for parameter semantics.
+ */
+void hsgemv(bool TransA, const unsigned int M, const unsigned int N,
+            const float alpha, const _Float16 *A, const unsigned int lda,
+            const float *X, const unsigned int incX, const float beta, float *Y,
+            const unsigned int incY);
+
 _Float16 max_val(const unsigned int N, _Float16 *X);
 void softmax(const unsigned int N, _Float16 *X, _Float16 *Y);
 void inv_sqrt_inplace(const unsigned int N, _Float16 *X);

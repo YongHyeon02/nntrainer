@@ -29,6 +29,7 @@
 #include <random>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <vector>
 
 #include <chrono>
@@ -1778,6 +1779,236 @@ TEST(nntrainer_cpu_backend_standalone, sgemv_fp16_beta_zero_does_not_read_Y) {
 
   check_path(false);
   check_path(true);
+}
+
+/// Mixed-precision GEMM path (shgemm: A=FP32,B=FP16 / hsgemm: A=FP16,B=FP32),
+/// FP32 output. Reference accumulates in double so the only approximation
+/// under test is the kernel's FP32 blocked summation; both sides read the
+/// identical generated operands, so operand rounding is not a discrepancy.
+template <typename AType, typename BType>
+static void run_mixed_sgemm_test(unsigned int M, unsigned int N, unsigned int K,
+                                 bool TransA = false, bool TransB = false,
+                                 float alpha = 1.0F, float beta = 0.0F,
+                                 unsigned int lda_extra = 0,
+                                 unsigned int ldb_extra = 0,
+                                 unsigned int ldc_extra = 0) {
+  static_assert(std::is_same_v<AType, float> != std::is_same_v<BType, float>,
+                "exactly one operand must be FP32 for mixed-precision GEMM");
+  nntrainer::init_backend();
+
+  const unsigned int lda = std::max(1u, (TransA ? M : K) + lda_extra);
+  const unsigned int ldb = std::max(1u, (TransB ? K : N) + ldb_extra);
+  const unsigned int ldc = std::max(1u, N + ldc_extra);
+  const unsigned int a_rows = TransA ? K : M;
+  const unsigned int b_rows = TransB ? N : K;
+  const std::size_t a_size =
+    std::max<std::size_t>(1, static_cast<std::size_t>(a_rows) * lda);
+  const std::size_t b_size =
+    std::max<std::size_t>(1, static_cast<std::size_t>(b_rows) * ldb);
+  const std::size_t c_size =
+    std::max<std::size_t>(1, static_cast<std::size_t>(M) * ldc);
+
+  auto A = generate_random_vector<AType>(a_size, -0.25F, 0.25F);
+  auto B = generate_random_vector<BType>(b_size, -0.25F, 0.25F);
+  auto C = generate_random_vector<float>(c_size, -0.25F, 0.25F);
+  auto C_before = C;
+
+  std::vector<float> C_ref(c_size);
+  for (std::size_t i = 0; i < c_size; ++i) {
+    C_ref[i] = C_before[i];
+  }
+
+  for (unsigned int m = 0; m < M; ++m) {
+    for (unsigned int n = 0; n < N; ++n) {
+      double acc = 0.0;
+      for (unsigned int k = 0; k < K; ++k) {
+        const double a = static_cast<double>(
+          static_cast<float>(TransA ? A[k * lda + m] : A[m * lda + k]));
+        const double b = static_cast<double>(
+          static_cast<float>(TransB ? B[n * ldb + k] : B[k * ldb + n]));
+        acc += a * b;
+      }
+      const std::size_t idx = static_cast<std::size_t>(m) * ldc + n;
+      C_ref[idx] = static_cast<float>(static_cast<double>(alpha) * acc +
+                                      static_cast<double>(beta) * C_ref[idx]);
+    }
+  }
+
+  if constexpr (std::is_same_v<AType, float>) {
+    nntrainer::shgemm(0, TransA, TransB, M, N, K, alpha, A.data(), lda,
+                      B.data(), ldb, beta, C.data(), ldc);
+  } else {
+    nntrainer::hsgemm(0, TransA, TransB, M, N, K, alpha, A.data(), lda,
+                      B.data(), ldb, beta, C.data(), ldc);
+  }
+
+  for (unsigned int m = 0; m < M; ++m) {
+    for (unsigned int n = 0; n < N; ++n) {
+      const std::size_t idx = static_cast<std::size_t>(m) * ldc + n;
+      const float got = C[idx];
+      const float ref = C_ref[idx];
+      const float abs_diff = std::abs(got - ref);
+      const float rel_diff = abs_diff / std::max(1.0F, std::abs(ref));
+      EXPECT_TRUE(abs_diff <= 1e-3F || rel_diff <= 1e-3F)
+        << "mismatch at m=" << m << " n=" << n << " M=" << M << " N=" << N
+        << " K=" << K << " TransA=" << TransA << " TransB=" << TransB
+        << " alpha=" << alpha << " beta=" << beta << " got=" << got
+        << " ref=" << ref << " abs_diff=" << abs_diff
+        << " rel_diff=" << rel_diff;
+    }
+    for (unsigned int n = N; n < ldc; ++n) {
+      const std::size_t idx = static_cast<std::size_t>(m) * ldc + n;
+      EXPECT_FLOAT_EQ(C[idx], C_before[idx])
+        << "C padding was modified at m=" << m << " n=" << n << " ldc=" << ldc;
+    }
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, shgemm_fp32xfp16_noTrans_64x64x64) {
+  run_mixed_sgemm_test<float, _FP16>(64, 64, 64);
+}
+TEST(nntrainer_cpu_backend_standalone, shgemm_fp32xfp16_noTrans_256x512x128) {
+  run_mixed_sgemm_test<float, _FP16>(256, 512, 128);
+}
+TEST(nntrainer_cpu_backend_standalone, shgemm_fp32xfp16_unaligned_13x33x65) {
+  run_mixed_sgemm_test<float, _FP16>(13, 33, 65);
+}
+TEST(nntrainer_cpu_backend_standalone,
+     shgemm_fp32xfp16_all_transposes_13x33x65) {
+  run_mixed_sgemm_test<float, _FP16>(13, 33, 65, true, false);
+  run_mixed_sgemm_test<float, _FP16>(13, 33, 65, false, true);
+  run_mixed_sgemm_test<float, _FP16>(13, 33, 65, true, true);
+}
+TEST(nntrainer_cpu_backend_standalone, shgemm_fp32xfp16_alpha_beta_padded) {
+  run_mixed_sgemm_test<float, _FP16>(13, 33, 65, false, false, 0.5F, 0.25F, 4,
+                                     7, 5);
+  run_mixed_sgemm_test<float, _FP16>(13, 33, 65, true, true, -1.25F, 0.5F, 5, 3,
+                                     6);
+}
+TEST(nntrainer_cpu_backend_standalone, hsgemm_fp16xfp32_noTrans_64x64x64) {
+  run_mixed_sgemm_test<_FP16, float>(64, 64, 64);
+}
+TEST(nntrainer_cpu_backend_standalone, hsgemm_fp16xfp32_noTrans_256x512x128) {
+  run_mixed_sgemm_test<_FP16, float>(256, 512, 128);
+}
+TEST(nntrainer_cpu_backend_standalone, hsgemm_fp16xfp32_unaligned_13x33x65) {
+  run_mixed_sgemm_test<_FP16, float>(13, 33, 65);
+}
+TEST(nntrainer_cpu_backend_standalone,
+     hsgemm_fp16xfp32_all_transposes_13x33x65) {
+  run_mixed_sgemm_test<_FP16, float>(13, 33, 65, true, false);
+  run_mixed_sgemm_test<_FP16, float>(13, 33, 65, false, true);
+  run_mixed_sgemm_test<_FP16, float>(13, 33, 65, true, true);
+}
+TEST(nntrainer_cpu_backend_standalone, hsgemm_fp16xfp32_alpha_beta_padded) {
+  run_mixed_sgemm_test<_FP16, float>(13, 33, 65, false, false, 0.5F, 0.25F, 4,
+                                     7, 5);
+  run_mixed_sgemm_test<_FP16, float>(13, 33, 65, true, true, -1.25F, 0.5F, 5, 3,
+                                     6);
+}
+
+/// Mixed-precision GEMV path (shgemv: A=FP32,X=FP16 / hsgemv: A=FP16,X=FP32),
+/// FP32 output. Reference accumulates in double; see run_mixed_sgemm_test.
+template <typename MatT, typename VecT>
+static void run_mixed_sgemv_test(unsigned int M, unsigned int N,
+                                 bool TransA = false, float alpha = 1.0F,
+                                 float beta = 0.0F, unsigned int lda_extra = 0,
+                                 unsigned int incX = 1, unsigned int incY = 1) {
+  static_assert(std::is_same_v<MatT, float> != std::is_same_v<VecT, float>,
+                "exactly one operand must be FP32 for mixed-precision GEMV");
+  nntrainer::init_backend();
+
+  const unsigned int lda = std::max(1u, N + lda_extra);
+  const unsigned int lenX = TransA ? M : N;
+  const unsigned int lenY = TransA ? N : M;
+
+  const std::size_t a_size =
+    std::max<std::size_t>(1, static_cast<std::size_t>(M) * lda);
+  const std::size_t x_size = std::max<std::size_t>(
+    1, static_cast<std::size_t>(lenX) * std::max(incX, 1u));
+  const std::size_t y_size = std::max<std::size_t>(
+    1, static_cast<std::size_t>(lenY) * std::max(incY, 1u));
+
+  auto A = generate_random_vector<MatT>(a_size, -0.25F, 0.25F);
+  auto X = generate_random_vector<VecT>(x_size, -0.25F, 0.25F);
+  auto Y = generate_random_vector<float>(y_size, -0.25F, 0.25F);
+  auto Y_before = Y;
+
+  std::vector<float> Y_ref(y_size);
+  for (std::size_t i = 0; i < y_size; ++i) {
+    Y_ref[i] = Y_before[i];
+  }
+
+  if (!TransA) {
+    for (unsigned int i = 0; i < M; ++i) {
+      double acc = 0.0;
+      for (unsigned int j = 0; j < N; ++j) {
+        acc += static_cast<double>(static_cast<float>(A[i * lda + j])) *
+               static_cast<double>(static_cast<float>(X[j * incX]));
+      }
+      const std::size_t y_idx = static_cast<std::size_t>(i) * incY;
+      Y_ref[y_idx] =
+        static_cast<float>(static_cast<double>(alpha) * acc +
+                           static_cast<double>(beta) * Y_ref[y_idx]);
+    }
+  } else {
+    for (unsigned int j = 0; j < N; ++j) {
+      double acc = 0.0;
+      for (unsigned int i = 0; i < M; ++i) {
+        acc += static_cast<double>(static_cast<float>(A[i * lda + j])) *
+               static_cast<double>(static_cast<float>(X[i * incX]));
+      }
+      const std::size_t y_idx = static_cast<std::size_t>(j) * incY;
+      Y_ref[y_idx] =
+        static_cast<float>(static_cast<double>(alpha) * acc +
+                           static_cast<double>(beta) * Y_ref[y_idx]);
+    }
+  }
+
+  if constexpr (std::is_same_v<MatT, float>) {
+    nntrainer::shgemv(0, TransA, M, N, alpha, A.data(), lda, X.data(), incX,
+                      beta, Y.data(), incY);
+  } else {
+    nntrainer::hsgemv(0, TransA, M, N, alpha, A.data(), lda, X.data(), incX,
+                      beta, Y.data(), incY);
+  }
+
+  for (unsigned int k = 0; k < lenY; ++k) {
+    const std::size_t y_idx = static_cast<std::size_t>(k) * incY;
+    const float got = Y[y_idx];
+    const float ref = Y_ref[y_idx];
+    const float abs_diff = std::abs(got - ref);
+    const float rel_diff = abs_diff / std::max(1.0F, std::abs(ref));
+    EXPECT_TRUE(abs_diff <= 1e-3F || rel_diff <= 1e-3F)
+      << "mismatch at k=" << k << " M=" << M << " N=" << N
+      << " TransA=" << TransA << " alpha=" << alpha << " beta=" << beta
+      << " incX=" << incX << " incY=" << incY << " got=" << got
+      << " ref=" << ref << " abs_diff=" << abs_diff << " rel_diff=" << rel_diff;
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, shgemv_fp32xfp16_noTrans_16x128) {
+  run_mixed_sgemv_test<float, _FP16>(16, 128);
+}
+TEST(nntrainer_cpu_backend_standalone,
+     shgemv_fp32xfp16_transA_unaligned_13x33) {
+  run_mixed_sgemv_test<float, _FP16>(13, 33, true);
+}
+TEST(nntrainer_cpu_backend_standalone, shgemv_fp32xfp16_alpha_beta_13x33) {
+  run_mixed_sgemv_test<float, _FP16>(13, 33, false, 0.5F, 0.25F);
+  run_mixed_sgemv_test<float, _FP16>(13, 33, true, 0.5F, 0.25F);
+}
+TEST(nntrainer_cpu_backend_standalone, hsgemv_fp16xfp32_noTrans_16x128) {
+  run_mixed_sgemv_test<_FP16, float>(16, 128);
+}
+TEST(nntrainer_cpu_backend_standalone,
+     hsgemv_fp16xfp32_transA_unaligned_13x33) {
+  run_mixed_sgemv_test<_FP16, float>(13, 33, true);
+}
+TEST(nntrainer_cpu_backend_standalone,
+     hsgemv_fp16xfp32_strided_incX_incY_7x17) {
+  run_mixed_sgemv_test<_FP16, float>(7, 17, false, 1.0F, 0.0F, 3, 2, 2);
+  run_mixed_sgemv_test<float, _FP16>(7, 17, true, 0.75F, 0.5F, 0, 2, 2);
 }
 
 int main(int argc, char **argv) {

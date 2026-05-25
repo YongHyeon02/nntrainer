@@ -14,10 +14,11 @@
 
 #include <avx2_impl.h>
 #include <cmath>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <immintrin.h>
 #include <new>
+#include <type_traits>
 
 namespace nntrainer::x86 {
 
@@ -32,7 +33,34 @@ float *aligned_alloc_f32(std::size_t n_floats) {
 
 void aligned_free(float *p) { std::free(p); }
 
-void copy_C_to_C32(const _FP16 *C, float *C32, unsigned int M, unsigned int N,
+namespace {
+
+/// Widen one C row into the FP32 accumulator. F16C for _FP16, plain copy for
+/// float so the FP32-output GEMMs avoid a needless conversion pass.
+template <typename CType>
+inline void widen_C_row(const CType *src, float *dst, unsigned int N) {
+  if constexpr (std::is_same_v<CType, float>) {
+    std::memcpy(dst, src, static_cast<std::size_t>(N) * sizeof(float));
+  } else {
+    nntrainer::avx2::vcvt_f16_f32(N, src, dst);
+  }
+}
+
+/// Narrow one FP32 accumulator row back into C (F16C for _FP16, copy for
+/// float).
+template <typename CType>
+inline void narrow_C_row(const float *src, CType *dst, unsigned int N) {
+  if constexpr (std::is_same_v<CType, float>) {
+    std::memcpy(dst, src, static_cast<std::size_t>(N) * sizeof(float));
+  } else {
+    nntrainer::avx2::vcvt_f32_f16(N, src, dst);
+  }
+}
+
+} // namespace
+
+template <typename CType>
+void copy_C_to_C32(const CType *C, float *C32, unsigned int M, unsigned int N,
                    unsigned int c_stride, unsigned int c32_stride, float beta) {
   if (std::fpclassify(beta) == FP_ZERO) {
     const std::size_t row_bytes = static_cast<std::size_t>(N) * sizeof(float);
@@ -45,7 +73,7 @@ void copy_C_to_C32(const _FP16 *C, float *C32, unsigned int M, unsigned int N,
   const bool beta_one = (beta == 1.0F);
   for (unsigned int m = 0; m < M; ++m) {
     float *row = C32 + m * c32_stride;
-    nntrainer::avx2::vcvt_f16_f32(N, C + m * c_stride, row);
+    widen_C_row<CType>(C + m * c_stride, row, N);
     if (!beta_one) {
       const __m256 vbeta = _mm256_set1_ps(beta);
       unsigned int n = 0;
@@ -60,19 +88,21 @@ void copy_C_to_C32(const _FP16 *C, float *C32, unsigned int M, unsigned int N,
   }
 }
 
-void copy_C32_to_C(const float *C32, _FP16 *C, unsigned int M, unsigned int N,
+template <typename CType>
+void copy_C32_to_C(const float *C32, CType *C, unsigned int M, unsigned int N,
                    unsigned int c32_stride, unsigned int c_stride) {
   for (unsigned int m = 0; m < M; ++m) {
-    nntrainer::avx2::vcvt_f32_f16(N, C32 + m * c32_stride, C + m * c_stride);
+    narrow_C_row<CType>(C32 + m * c32_stride, C + m * c_stride, N);
   }
 }
 
-void apply_beta_to_C(_FP16 *C, unsigned int M, unsigned int N,
+template <typename CType>
+void apply_beta_to_C(CType *C, unsigned int M, unsigned int N,
                      unsigned int c_stride, float beta) {
   if (std::fpclassify(beta) == FP_ZERO) {
     for (unsigned int m = 0; m < M; ++m) {
       for (unsigned int n = 0; n < N; ++n) {
-        C[m * c_stride + n] = static_cast<_FP16>(0.0F);
+        C[m * c_stride + n] = static_cast<CType>(0.0F);
       }
     }
     return;
@@ -85,9 +115,24 @@ void apply_beta_to_C(_FP16 *C, unsigned int M, unsigned int N,
   for (unsigned int m = 0; m < M; ++m) {
     for (unsigned int n = 0; n < N; ++n) {
       const std::size_t idx = static_cast<std::size_t>(m) * c_stride + n;
-      C[idx] = static_cast<_FP16>(beta * static_cast<float>(C[idx]));
+      C[idx] = static_cast<CType>(beta * static_cast<float>(C[idx]));
     }
   }
 }
+
+template void copy_C_to_C32<_FP16>(const _FP16 *, float *, unsigned int,
+                                   unsigned int, unsigned int, unsigned int,
+                                   float);
+template void copy_C_to_C32<float>(const float *, float *, unsigned int,
+                                   unsigned int, unsigned int, unsigned int,
+                                   float);
+template void copy_C32_to_C<_FP16>(const float *, _FP16 *, unsigned int,
+                                   unsigned int, unsigned int, unsigned int);
+template void copy_C32_to_C<float>(const float *, float *, unsigned int,
+                                   unsigned int, unsigned int, unsigned int);
+template void apply_beta_to_C<_FP16>(_FP16 *, unsigned int, unsigned int,
+                                     unsigned int, float);
+template void apply_beta_to_C<float>(float *, unsigned int, unsigned int,
+                                     unsigned int, float);
 
 } /* namespace nntrainer::x86 */
