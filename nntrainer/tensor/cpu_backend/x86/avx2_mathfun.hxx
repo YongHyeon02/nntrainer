@@ -1,4 +1,7 @@
+<<<<<<< HEAD
 // SPDX-License-Identifier: Apache-2.0
+=======
+>>>>>>> feat/x86-fp16-avx2-impl
 /**
  * @file   avx2_mathfun.hxx
  * @date   03 Apr 2026
