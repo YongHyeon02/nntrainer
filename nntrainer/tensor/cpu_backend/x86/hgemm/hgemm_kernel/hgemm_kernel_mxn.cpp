@@ -42,8 +42,4 @@ void hgemm_kernel_mxn(unsigned int M, unsigned int N, unsigned int K,
   }
 }
 
-<<<<<<< HEAD
-} /* namespace nntrainer::hgemm::internal */
-=======
 } /* namespace nntrainer::x86 */
->>>>>>> feat/x86-fp16-attention

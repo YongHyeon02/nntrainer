@@ -41,8 +41,4 @@ void hgemm_kernel_2x8(unsigned int K, const float *packed_A,
   _mm256_storeu_ps(c1, c10);
 }
 
-<<<<<<< HEAD
-} /* namespace nntrainer::hgemm::internal */
-=======
 } /* namespace nntrainer::x86 */
->>>>>>> feat/x86-fp16-attention

@@ -47,10 +47,6 @@ using namespace nntrainer::avx2::internal;
 
 namespace nntrainer::avx2 {
 
-// Forward declarations for internal helpers used across the file
-static inline __m256 exp256_ps(__m256 x);
-static float hsum_avx(__m256 v);
-
 /**
  * @brief struct of q4_0x8 block
  */

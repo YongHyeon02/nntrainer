@@ -340,31 +340,31 @@ TEST(nntrainer_cpu_backend_standalone,
      sgemm_fp16_workspace_reuse_warmed_shape) {
   run_sgemm_fp16_hgemm_test(64, 64, 64);
 
-  nntrainer::hgemm::internal::testing::reset_hgemm_workspace_stats();
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
   run_sgemm_fp16_hgemm_test(64, 64, 64);
   auto same_stats =
-    nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+    nntrainer::x86::testing::get_hgemm_workspace_stats();
   EXPECT_EQ(same_stats.total_realloc_count, 0u);
 
-  nntrainer::hgemm::internal::testing::reset_hgemm_workspace_stats();
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
   run_sgemm_fp16_hgemm_test(7, 17, 33);
   auto smaller_stats =
-    nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+    nntrainer::x86::testing::get_hgemm_workspace_stats();
   EXPECT_EQ(smaller_stats.total_realloc_count, 0u);
 }
 
 TEST(nntrainer_cpu_backend_standalone,
      sgemm_fp16_workspace_uses_c32_panel_and_packed_panels) {
-  nntrainer::hgemm::internal::testing::clear_hgemm_workspace();
+  nntrainer::x86::testing::clear_hgemm_workspace();
 
-  const auto &block = nntrainer::hgemm::internal::get_hgemm_block_sizes();
+  const auto &block = nntrainer::x86::get_hgemm_block_sizes();
   const unsigned int M = block.m + 1;
   const unsigned int N = block.n + 1;
   const unsigned int K = 5;
 
   run_sgemm_fp16_hgemm_test(M, N, K, false, false, 0.75F, 0.25F);
   const auto stats =
-    nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+    nntrainer::x86::testing::get_hgemm_workspace_stats();
 
   const auto round_up_to = [](unsigned int value, unsigned int tile) {
     return ((value + tile - 1) / tile) * tile;
@@ -403,11 +403,11 @@ TEST(nntrainer_cpu_backend_standalone,
 
 TEST(nntrainer_cpu_backend_standalone,
      sgemm_fp16_workspace_row_fast_path_uses_scratch_only) {
-  nntrainer::hgemm::internal::testing::clear_hgemm_workspace();
+  nntrainer::x86::testing::clear_hgemm_workspace();
 
   const unsigned int N = 257;
   run_sgemm_fp16_hgemm_test(1, N, 129, false, false, 0.75F, -0.25F, 3, 5, 7);
-  auto stats = nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+  auto stats = nntrainer::x86::testing::get_hgemm_workspace_stats();
 
   EXPECT_EQ(stats.c32_capacity, 0u);
   EXPECT_EQ(stats.pack_a_capacity, 0u);
@@ -420,9 +420,9 @@ TEST(nntrainer_cpu_backend_standalone,
   EXPECT_EQ(stats.total_realloc_count, 1u);
   EXPECT_EQ(stats.total_capacity_bytes, stats.scratch_capacity * sizeof(float));
 
-  nntrainer::hgemm::internal::testing::reset_hgemm_workspace_stats();
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
   run_sgemm_fp16_hgemm_test(1, N, 129, true, false, -0.5F, 0.125F, 2, 4, 3);
-  stats = nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+  stats = nntrainer::x86::testing::get_hgemm_workspace_stats();
 
   EXPECT_EQ(stats.c32_capacity, 0u);
   EXPECT_EQ(stats.pack_a_capacity, 0u);
@@ -435,11 +435,11 @@ TEST(nntrainer_cpu_backend_standalone,
 
 TEST(nntrainer_cpu_backend_standalone,
      sgemm_fp16_workspace_row_transB_fast_path_uses_scratch_only) {
-  nntrainer::hgemm::internal::testing::clear_hgemm_workspace();
+  nntrainer::x86::testing::clear_hgemm_workspace();
 
   const unsigned int K = 129;
   run_sgemm_fp16_hgemm_test(1, 257, K, false, true, 0.75F, -0.25F, 3, 5, 7);
-  auto stats = nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+  auto stats = nntrainer::x86::testing::get_hgemm_workspace_stats();
 
   EXPECT_EQ(stats.c32_capacity, 0u);
   EXPECT_EQ(stats.pack_a_capacity, 0u);
@@ -452,9 +452,9 @@ TEST(nntrainer_cpu_backend_standalone,
   EXPECT_EQ(stats.total_realloc_count, 1u);
   EXPECT_EQ(stats.total_capacity_bytes, stats.scratch_capacity * sizeof(float));
 
-  nntrainer::hgemm::internal::testing::reset_hgemm_workspace_stats();
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
   run_sgemm_fp16_hgemm_test(1, 257, K, true, true, -0.5F, 0.125F, 2, 4, 3);
-  stats = nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+  stats = nntrainer::x86::testing::get_hgemm_workspace_stats();
 
   EXPECT_EQ(stats.c32_capacity, 0u);
   EXPECT_EQ(stats.pack_a_capacity, 0u);
@@ -467,18 +467,18 @@ TEST(nntrainer_cpu_backend_standalone,
 
 TEST(nntrainer_cpu_backend_standalone,
      sgemm_fp16_workspace_no_allocation_for_fast_small_shapes) {
-  nntrainer::hgemm::internal::testing::clear_hgemm_workspace();
+  nntrainer::x86::testing::clear_hgemm_workspace();
   run_sgemm_fp16_hgemm_test(129, 257, 4, false, false, -0.75F, 0.25F, 3, 5, 7);
-  auto stats = nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+  auto stats = nntrainer::x86::testing::get_hgemm_workspace_stats();
   EXPECT_EQ(stats.c32_capacity, 0u);
   EXPECT_EQ(stats.pack_a_capacity, 0u);
   EXPECT_EQ(stats.pack_b_capacity, 0u);
   EXPECT_EQ(stats.scratch_capacity, 0u);
   EXPECT_EQ(stats.total_realloc_count, 0u);
 
-  nntrainer::hgemm::internal::testing::clear_hgemm_workspace();
+  nntrainer::x86::testing::clear_hgemm_workspace();
   run_sgemm_fp16_hgemm_test(131, 2, 67, true, true, 0.75F, -0.25F, 3, 5, 7);
-  stats = nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+  stats = nntrainer::x86::testing::get_hgemm_workspace_stats();
   EXPECT_EQ(stats.c32_capacity, 0u);
   EXPECT_EQ(stats.pack_a_capacity, 0u);
   EXPECT_EQ(stats.pack_b_capacity, 0u);
@@ -494,7 +494,7 @@ template <typename SrcT> static void run_packing_B_N16_trans_test() {
                                           -1.0F, 1.0F);
   std::vector<float> dst(static_cast<std::size_t>(K) * X86_HGEMM_NR, -123.0F);
 
-  nntrainer::hgemm::internal::packing_B_N16_trans(K, N, src.data(), stride,
+  nntrainer::x86::packing_B_N16_trans(K, N, src.data(), stride,
                                                   dst.data());
 
   for (unsigned int k = 0; k < K; ++k) {
@@ -517,28 +517,28 @@ TEST(nntrainer_cpu_backend_standalone, hgemm_pack_B_N16_trans_float) {
 
 TEST(nntrainer_cpu_backend_standalone,
      sgemm_fp16_workspace_no_allocation_for_degenerate_paths) {
-  nntrainer::hgemm::internal::testing::reset_hgemm_workspace_stats();
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
   run_sgemm_fp16_hgemm_test(13, 33, 65, false, false, 0.0F, 0.5F);
   auto alpha_zero_stats =
-    nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+    nntrainer::x86::testing::get_hgemm_workspace_stats();
   EXPECT_EQ(alpha_zero_stats.total_realloc_count, 0u);
 
-  nntrainer::hgemm::internal::testing::reset_hgemm_workspace_stats();
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
   run_sgemm_fp16_hgemm_test(13, 33, 0, false, false, 1.0F, -0.5F);
   auto k_zero_stats =
-    nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+    nntrainer::x86::testing::get_hgemm_workspace_stats();
   EXPECT_EQ(k_zero_stats.total_realloc_count, 0u);
 
-  nntrainer::hgemm::internal::testing::reset_hgemm_workspace_stats();
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
   run_sgemm_fp16_hgemm_test(0, 33, 65, false, false, 1.0F, 0.0F);
   auto m_zero_stats =
-    nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+    nntrainer::x86::testing::get_hgemm_workspace_stats();
   EXPECT_EQ(m_zero_stats.total_realloc_count, 0u);
 
-  nntrainer::hgemm::internal::testing::reset_hgemm_workspace_stats();
+  nntrainer::x86::testing::reset_hgemm_workspace_stats();
   run_sgemm_fp16_hgemm_test(13, 0, 65, false, false, 1.0F, 0.0F);
   auto n_zero_stats =
-    nntrainer::hgemm::internal::testing::get_hgemm_workspace_stats();
+    nntrainer::x86::testing::get_hgemm_workspace_stats();
   EXPECT_EQ(n_zero_stats.total_realloc_count, 0u);
 }
 #endif

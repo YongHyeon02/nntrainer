@@ -2015,8 +2015,6 @@ TEST(nntrainer_cpu_backend_standalone, rms_norm_fp16_template_float) {
        "separate PR)";
 }
 
-<<<<<<< HEAD
-=======
 // ============================================================================
 // P2: AVX2+F16C replacement tests for formerly-fallback FP16 functions
 // ============================================================================
@@ -2922,7 +2920,6 @@ TEST(nntrainer_cpu_backend_standalone,
 
 #endif // ENABLE_FP16
 
->>>>>>> feat/x86-fp16-avx2-impl
 int main(int argc, char **argv) {
   int result = -1;
 
