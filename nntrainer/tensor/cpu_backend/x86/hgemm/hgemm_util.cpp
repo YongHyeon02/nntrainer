@@ -29,15 +29,10 @@
 #include <cpuid.h>
 #endif
 
-#if defined(_WIN32)
-#include <malloc.h> // _aligned_malloc / _aligned_free
-#endif
-
-namespace nntrainer::hgemm::internal {
+namespace nntrainer::x86 {
 
 namespace {
 
-/** @brief Decoded x86 CPU vendor string and family/model identification */
 struct X86CpuInfo {
   char vendor[13] = {};
   unsigned int family = 0;
@@ -153,27 +148,15 @@ const HgemmBlockSizes &get_hgemm_block_sizes() {
 }
 
 float *aligned_alloc_f32(std::size_t n_floats) {
-  // Round up so the byte count is a multiple of the 64-byte alignment, which
-  // std::aligned_alloc requires (C11 size must be a multiple of alignment).
-  const std::size_t bytes = ((n_floats * sizeof(float) + 63u) / 64u) * 64u;
-#if defined(_WIN32)
-  void *p = _aligned_malloc(bytes, 64);
-#else
-  void *p = std::aligned_alloc(64, bytes);
-#endif
-  if (p == nullptr) {
+  void *p = nullptr;
+  std::size_t bytes = ((n_floats * sizeof(float) + 63u) / 64u) * 64u;
+  if (posix_memalign(&p, 64, bytes) != 0) {
     throw std::bad_alloc();
   }
   return static_cast<float *>(p);
 }
 
-void aligned_free(float *p) {
-#if defined(_WIN32)
-  _aligned_free(p);
-#else
-  std::free(p);
-#endif
-}
+void aligned_free(float *p) { std::free(p); }
 
 namespace {
 
@@ -277,4 +260,4 @@ template void apply_beta_to_C<_FP16>(_FP16 *, unsigned int, unsigned int,
 template void apply_beta_to_C<float>(float *, unsigned int, unsigned int,
                                      unsigned int, float);
 
-} /* namespace nntrainer::hgemm::internal */
+} /* namespace nntrainer::x86 */

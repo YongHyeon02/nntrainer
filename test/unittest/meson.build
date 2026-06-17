@@ -96,7 +96,11 @@ endif
 if get_option('enable-fp16')
   test_target += [['unittest_nntrainer_tensor_fp16', []]]
   test_target += [['unittest_nntrainer_tensor_pool_fp16', []]]
+<<<<<<< HEAD
   test_target += [['unittest_nntrainer_cpu_backend_fp16_x86', []]]
+=======
+  test_target += [['unittest_nntrainer_cpu_backend_fp16', []]]
+>>>>>>> feat/x86-fp16-attention
 endif
 
 if get_option('enable-profile')

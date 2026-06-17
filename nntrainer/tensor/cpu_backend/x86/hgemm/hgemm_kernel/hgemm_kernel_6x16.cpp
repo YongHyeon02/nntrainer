@@ -14,7 +14,11 @@
 
 #include <immintrin.h>
 
+<<<<<<< HEAD
 namespace nntrainer::hgemm::internal {
+=======
+namespace nntrainer::x86 {
+>>>>>>> feat/x86-fp16-attention
 
 void hgemm_kernel_6x16(unsigned int K, const float *packed_A,
                        const float *packed_B, float *C, unsigned int c_stride) {
@@ -84,4 +88,8 @@ void hgemm_kernel_6x16(unsigned int K, const float *packed_A,
   _mm256_storeu_ps(c5 + 8, c51);
 }
 
+<<<<<<< HEAD
 } /* namespace nntrainer::hgemm::internal */
+=======
+} /* namespace nntrainer::x86 */
+>>>>>>> feat/x86-fp16-attention

@@ -22,7 +22,7 @@
 #include <cstring>
 #include <thread_manager.h>
 
-namespace nntrainer::hgemm::internal {
+namespace nntrainer::x86 {
 
 namespace {
 
@@ -243,4 +243,8 @@ template void run_hgemm_blocked<_FP16, float, float>(
   unsigned int, const float *, unsigned int, float, float *, unsigned int,
   HgemmWorkspace &);
 
+<<<<<<< HEAD
 } /* namespace nntrainer::hgemm::internal */
+=======
+} /* namespace nntrainer::x86 */
+>>>>>>> feat/x86-fp16-attention

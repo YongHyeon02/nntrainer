@@ -34,8 +34,8 @@ void shgemm(const unsigned int TStorageOrder, bool TransA, bool TransB,
             const _FP16 *B, const unsigned int ldb, const float beta, float *C,
             const unsigned int ldc) {
   if (TStorageOrder == ROW_MAJOR) {
-    nntrainer::hgemm::shgemm(A, B, C, M, N, K, lda, ldb, ldc, alpha, beta,
-                             TransA, TransB);
+    nntrainer::x86::shgemm(A, B, C, M, N, K, lda, ldb, ldc, alpha, beta, TransA,
+                           TransB);
     return;
   }
 
@@ -86,8 +86,8 @@ void hsgemm(const unsigned int TStorageOrder, bool TransA, bool TransB,
             const float *B, const unsigned int ldb, const float beta, float *C,
             const unsigned int ldc) {
   if (TStorageOrder == ROW_MAJOR) {
-    nntrainer::hgemm::hsgemm(A, B, C, M, N, K, lda, ldb, ldc, alpha, beta,
-                             TransA, TransB);
+    nntrainer::x86::hsgemm(A, B, C, M, N, K, lda, ldb, ldc, alpha, beta, TransA,
+                           TransB);
     return;
   }
 
@@ -198,36 +198,13 @@ void sgemm(const unsigned int TStorageOrder, bool TransA, bool TransB,
            const float alpha, const _FP16 *A, const unsigned int lda,
            const _FP16 *B, const unsigned int ldb, const float beta, _FP16 *C,
            const unsigned int ldc) {
-  if (TStorageOrder == ROW_MAJOR) {
-    nntrainer::hgemm::hgemm(A, B, C, M, N, K, lda, ldb, ldc, alpha, beta,
-                            TransA, TransB);
-    return;
+  if (TStorageOrder) {
+    __fallback_sgemm(TStorageOrder, TransA, TransB, M, N, K, alpha, A, lda, B,
+                     ldb, beta, C, ldc);
+  } else {
+    nntrainer::x86::hgemm(A, B, C, M, N, K, lda, ldb, ldc, alpha, beta, TransA,
+                          TransB);
   }
-
-  // The cache-blocked hgemm path is row-major only, so column-major inputs fall
-  // back to the legacy FP32-conversion path. CBLAS honors TStorageOrder;
-  // __fallback_sgemm does not, so it is only valid as the non-BLAS baseline.
-#ifdef USE_BLAS
-  float *A_ = new float[M * K];
-  float *B_ = new float[N * K];
-  float *C_ = new float[M * N];
-
-  scopy(M * K, A, 1, A_, 1);
-  scopy(N * K, B, 1, B_, 1);
-  scopy(M * N, C, 1, C_, 1);
-
-  __cblas_sgemm(TStorageOrder, TransA, TransB, M, N, K, alpha, A_, lda, B_, ldb,
-                beta, C_, ldc);
-
-  scopy(M * N, C_, 1, C, 1);
-
-  delete[] A_;
-  delete[] B_;
-  delete[] C_;
-#else
-  __fallback_sgemm(TStorageOrder, TransA, TransB, M, N, K, alpha, A, lda, B,
-                   ldb, beta, C, ldc);
-#endif
 }
 
 void sgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,
@@ -324,6 +301,50 @@ _FP16 max_val(const unsigned int N, _FP16 *X) { return avx2::max_val(N, X); }
 
 void softmax(const unsigned int N, _FP16 *X, _FP16 *Y) {
   avx2::softmax(N, X, Y);
+}
+
+// FP16-input attention kernels (delegate to the AVX2+F16C implementations).
+// softmax_row shares semantics with the in-place variant, mirroring the ARM
+// backend.
+template <>
+void softmax_row_inplace(_FP16 *qk_out, size_t start_row, size_t end_row,
+                         size_t num_heads, _FP16 *sink) {
+  avx2::softmax_row_inplace<_FP16>(qk_out, start_row, end_row, num_heads, sink);
+}
+
+void softmax_row_inplace(_FP16 *qk_out, size_t start_row, size_t end_row,
+                         size_t num_heads, float *sink) {
+  avx2::softmax_row_inplace(qk_out, start_row, end_row, num_heads, sink);
+}
+
+template <>
+void softmax_row(_FP16 *qk_out, size_t start_row, size_t end_row,
+                 size_t num_heads, _FP16 *sink) {
+  avx2::softmax_row_inplace<_FP16>(qk_out, start_row, end_row, num_heads, sink);
+}
+
+void softmax_row(_FP16 *qk_out, size_t start_row, size_t end_row,
+                 size_t num_heads, float *sink) {
+  avx2::softmax_row_inplace(qk_out, start_row, end_row, num_heads, sink);
+}
+
+void compute_fp16vcache_transposed(int row_num, const _FP16 *in,
+                                   const _FP16 *vcache, _FP16 *output,
+                                   int num_cache_head, int gqa_size,
+                                   int head_dim, size_t local_window_size,
+                                   int head_start, int head_end) {
+  avx2::compute_fp16vcache_transposed(row_num, in, vcache, output,
+                                      num_cache_head, gqa_size, head_dim,
+                                      local_window_size, head_start, head_end);
+}
+
+void compute_kcaches(const _FP16 *in, const _FP16 *kcache, _FP16 *output,
+                     int num_rows, int num_cache_head, int head_dim,
+                     int gqa_size, int tile_size, size_t local_window_size,
+                     int head_start, int head_end) {
+  avx2::compute_kcaches(in, kcache, output, num_rows, num_cache_head, head_dim,
+                        gqa_size, tile_size, local_window_size, head_start,
+                        head_end);
 }
 
 template <> void dequantize_row_q8_0(const void *x_raw, _FP16 *y, int64_t k) {

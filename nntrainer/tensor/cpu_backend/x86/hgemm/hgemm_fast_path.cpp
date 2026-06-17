@@ -21,7 +21,7 @@
 #include <immintrin.h>
 #include <thread_manager.h>
 
-namespace nntrainer::hgemm::internal {
+namespace nntrainer::x86 {
 
 namespace {
 
@@ -367,4 +367,4 @@ template bool try_hgemm_fast_path<_FP16, float, float>(
   unsigned int, const float *, unsigned int, float, float *, unsigned int,
   HgemmWorkspace &);
 
-} /* namespace nntrainer::hgemm::internal */
+} /* namespace nntrainer::x86 */
