@@ -1125,23 +1125,23 @@ void MHACoreLayer::apply_rotary_emb_tensor_v2(nntrainer::Tensor &in,
     }
   } else if (in.getDataType() == ml::train::TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
-    std::vector<std::vector<_FP16>> *freqs_cos_fp16_local = nullptr;
-    std::vector<std::vector<_FP16>> *freqs_sin_fp16_local = nullptr;
+    std::vector<std::vector<float>> *freqs_cos_local = nullptr;
+    std::vector<std::vector<float>> *freqs_sin_local = nullptr;
     {
       const std::lock_guard<std::mutex> lock(rope_init_mtx);
-      precompute_freqs(head_dim, max_position_embeddings, theta, true);
-      freqs_cos_fp16_local = freqs_cos_fp16;
-      freqs_sin_fp16_local = freqs_sin_fp16;
+      precompute_freqs(head_dim, max_position_embeddings, theta, false);
+      freqs_cos_local = freqs_cos;
+      freqs_sin_local = freqs_sin;
     }
-    std::vector<_FP16> *cos_ = nullptr;
-    std::vector<_FP16> *sin_ = nullptr;
+    std::vector<float> *cos_ = nullptr;
+    std::vector<float> *sin_ = nullptr;
 
     for (unsigned int b = 0; b < in.batch(); b++) {
       for (unsigned int c = 0; c < in.channel(); c++) {
         for (unsigned int h = 0; h < in.height(); h++) {
           if (from < max_timestep) {
-            cos_ = &(*freqs_cos_fp16_local)[from + h];
-            sin_ = &(*freqs_sin_fp16_local)[from + h];
+            cos_ = &(*freqs_cos_local)[from + h];
+            sin_ = &(*freqs_sin_local)[from + h];
           }
           _FP16 *in_ptr = in.getData<_FP16>() +
                           b * in.channel() * in.height() * in.width() +
@@ -1150,9 +1150,17 @@ void MHACoreLayer::apply_rotary_emb_tensor_v2(nntrainer::Tensor &in,
                            b * out.channel() * out.height() * out.width() +
                            c * out.height() * out.width() + h * out.width();
 
-          nntrainer::compute_rotary_emb_value(in.width(), dim, half_, in_ptr,
-                                              out_ptr, cos_->data(),
-                                              sin_->data());
+          if (!apply_rope) {
+            if (out_ptr != in_ptr) {
+              std::memcpy(out_ptr, in_ptr, sizeof(_FP16) * in.width());
+            }
+            continue;
+          }
+
+          for (unsigned int w = 0; w < in.width(); w += dim) {
+            nntrainer::compute_rotary_embedding_value(
+              dim, half_, w, in_ptr, out_ptr, cos_->data(), sin_->data());
+          }
         }
       }
     }
