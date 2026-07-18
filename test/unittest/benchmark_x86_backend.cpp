@@ -241,6 +241,242 @@ TEST_F(Bench_EleOps, ele_add) {
 #endif
 
 // ============================================================================
+// Activation / Reduction Benchmarks (FP32 vs FP16 interleaved)
+// ============================================================================
+
+/**
+ * @brief Test fixture for activation and reduction benchmarks
+ */
+class Bench_Activations : public ::testing::Test {};
+
+TEST_F(Bench_Activations, softmax) {
+  for (const unsigned int N : g_bench_sizes) {
+    SCOPED_TRACE("N=" + std::to_string(N));
+
+    {
+      auto X = generate_random_vector<float>(N);
+      std::vector<float> Y(N);
+
+      auto stats =
+        bench::measure([&]() { nntrainer::softmax(N, X.data(), Y.data()); },
+                       g_bench_warmup, g_bench_iters);
+
+      bench::Metrics m;
+      m.num_elements = N;
+      bench::report("softmax", "FP32", "N=" + std::to_string(N), stats, m);
+    }
+
+#ifdef ENABLE_FP16
+    {
+      auto X_u16 = convert_f32_to_f16_u16(generate_random_vector<float>(N));
+      std::vector<uint16_t> Y(N);
+
+      auto stats = bench::measure(
+        [&]() {
+          nntrainer::softmax(N, (_FP16 *)X_u16.data(), (_FP16 *)Y.data());
+        },
+        g_bench_warmup, g_bench_iters);
+
+      bench::Metrics m;
+      m.num_elements = N;
+      bench::report("softmax", "FP16", "N=" + std::to_string(N), stats, m);
+    }
+#endif
+  }
+}
+
+TEST_F(Bench_Activations, tanh_gelu) {
+  for (const unsigned int N : g_bench_sizes) {
+    SCOPED_TRACE("N=" + std::to_string(N));
+    auto X = generate_random_vector<float>(N);
+    std::vector<float> Y(N);
+
+    auto stats =
+      bench::measure([&]() { nntrainer::tanh_gelu(N, X.data(), Y.data()); },
+                     g_bench_warmup, g_bench_iters);
+
+    bench::Metrics m;
+    m.num_elements = N;
+    bench::report("tanh_gelu", "FP32", "N=" + std::to_string(N), stats, m);
+  }
+}
+
+TEST_F(Bench_Activations, tanh_gelu_mul) {
+  for (const unsigned int N : g_bench_sizes) {
+    SCOPED_TRACE("N=" + std::to_string(N));
+    auto Y_in = generate_random_vector<float>(N);
+    auto Z_in = generate_random_vector<float>(N);
+    std::vector<float> X(N);
+
+    auto stats = bench::measure(
+      [&]() {
+        nntrainer::tanh_gelu_mul(N, X.data(), Y_in.data(), Z_in.data());
+      },
+      g_bench_warmup, g_bench_iters);
+
+    bench::Metrics m;
+    m.num_elements = N;
+    bench::report("tanh_gelu_mul", "FP32", "N=" + std::to_string(N), stats, m);
+  }
+}
+
+TEST_F(Bench_Activations, inv_sqrt_inplace) {
+  for (const unsigned int N : g_bench_sizes) {
+    SCOPED_TRACE("N=" + std::to_string(N));
+
+    {
+      auto X_orig = generate_random_vector<float>(N, 0.01f, 10.0f);
+      auto X_tmp = X_orig;
+
+      auto stats = bench::measure_with_setup(
+        [&]() { std::copy(X_orig.begin(), X_orig.end(), X_tmp.begin()); },
+        [&]() { nntrainer::inv_sqrt_inplace(N, X_tmp.data()); }, g_bench_warmup,
+        g_bench_iters);
+
+      bench::Metrics m;
+      m.num_elements = N;
+      bench::report("inv_sqrt_inplace", "FP32", "N=" + std::to_string(N), stats,
+                    m);
+    }
+
+#ifdef ENABLE_FP16
+    {
+      auto X_orig =
+        convert_f32_to_f16_u16(generate_random_vector<float>(N, 0.01f, 10.0f));
+      auto X_u16 = X_orig;
+
+      auto stats = bench::measure_with_setup(
+        [&]() { X_u16 = X_orig; },
+        [&]() { nntrainer::inv_sqrt_inplace(N, (_FP16 *)X_u16.data()); },
+        g_bench_warmup, g_bench_iters);
+
+      bench::Metrics m;
+      m.num_elements = N;
+      bench::report("inv_sqrt_inplace", "FP16", "N=" + std::to_string(N), stats,
+                    m);
+    }
+#endif
+  }
+}
+
+TEST_F(Bench_Activations, max_val) {
+  for (const unsigned int N : g_bench_sizes) {
+    SCOPED_TRACE("N=" + std::to_string(N));
+
+    {
+      auto X = generate_random_vector<float>(N);
+
+      float val = 0.0f;
+      auto stats =
+        bench::measure([&]() { val = nntrainer::max_val(N, X.data()); },
+                       g_bench_warmup, g_bench_iters);
+
+      bench::Metrics m;
+      m.num_elements = N;
+      bench::report("max_val", "FP32", "N=" + std::to_string(N), stats, m);
+    }
+
+#ifdef ENABLE_FP16
+    {
+      auto X_u16 = convert_f32_to_f16_u16(generate_random_vector<float>(N));
+
+      auto stats =
+        bench::measure([&]() { nntrainer::max_val(N, (_FP16 *)X_u16.data()); },
+                       g_bench_warmup, g_bench_iters);
+
+      bench::Metrics m;
+      m.num_elements = N;
+      bench::report("max_val", "FP16", "N=" + std::to_string(N), stats, m);
+    }
+#endif
+  }
+}
+
+#ifdef ENABLE_FP16
+TEST_F(Bench_Activations, swiglu) {
+  for (const unsigned int N : g_bench_sizes) {
+    SCOPED_TRACE("N=" + std::to_string(N));
+    auto Y_u16 = convert_f32_to_f16_u16(generate_random_vector<float>(N));
+    auto Z_u16 = convert_f32_to_f16_u16(generate_random_vector<float>(N));
+    std::vector<uint16_t> X(N);
+
+    auto stats = bench::measure(
+      [&]() {
+        nntrainer::swiglu(N, (_FP16 *)X.data(), (_FP16 *)Y_u16.data(),
+                          (_FP16 *)Z_u16.data());
+      },
+      g_bench_warmup, g_bench_iters);
+
+    bench::Metrics m;
+    m.num_elements = N;
+    bench::report("swiglu", "FP16", "N=" + std::to_string(N), stats, m);
+  }
+}
+#endif
+
+// ============================================================================
+// RMS Norm Benchmarks (FP32 vs FP16 interleaved)
+// ============================================================================
+
+/**
+ * @brief Test fixture for RMS normalization benchmarks
+ */
+class Bench_RmsNorm
+  : public ::testing::TestWithParam<std::tuple<unsigned int, unsigned int>> {};
+
+TEST_P(Bench_RmsNorm, rms_norm) {
+  auto [H, W] = GetParam();
+  const unsigned int H_v = H;
+  const unsigned int W_v = W;
+  const unsigned int N = H * W;
+  float epsilon = 1e-6f;
+  std::string sz = "H=" + std::to_string(H) + ",W=" + std::to_string(W);
+
+  {
+    auto X = generate_random_vector<float>(N);
+    std::vector<float> Y(N);
+
+    auto stats = bench::measure(
+      [&]() {
+        nntrainer::rms_norm_wrt_width_fp32_intrinsic(X.data(), Y.data(), H_v,
+                                                     W_v, epsilon);
+      },
+      g_bench_warmup, g_bench_iters);
+
+    bench::Metrics m;
+    m.num_elements = N;
+    m.total_bytes = 2 * N * sizeof(float);
+    bench::report("rms_norm", "FP32", sz, stats, m);
+  }
+
+#ifdef ENABLE_FP16
+  {
+    auto X_u16 = convert_f32_to_f16_u16(generate_random_vector<float>(N));
+    std::vector<uint16_t> Y(N);
+
+    auto stats = bench::measure(
+      [&]() {
+        nntrainer::rms_norm_wrt_width_fp16_intrinsic<_FP16>(
+          (const _FP16 *)X_u16.data(), (_FP16 *)Y.data(), H_v, W_v, epsilon);
+      },
+      g_bench_warmup, g_bench_iters);
+
+    bench::Metrics m;
+    m.num_elements = N;
+    m.total_bytes = 2 * N * sizeof(uint16_t);
+    bench::report("rms_norm", "FP16", sz, stats, m);
+  }
+#endif
+}
+
+GTEST_PARAMETER_TEST(
+  Dims, Bench_RmsNorm,
+  ::testing::Values(std::make_tuple(1u, 128u), std::make_tuple(1u, 512u),
+                    std::make_tuple(4u, 256u), std::make_tuple(4u, 1024u),
+                    std::make_tuple(16u, 256u), std::make_tuple(16u, 1024u),
+                    std::make_tuple(16u, 3072u)));
+
+// ============================================================================
 // Main
 // ============================================================================
 
