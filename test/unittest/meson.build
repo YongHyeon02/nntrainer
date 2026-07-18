@@ -127,6 +127,20 @@ foreach target: test_target
   )
 endforeach
 
+# Benchmark binary - build only, not registered as a test.
+# Run manually: ./benchmark_x86_backend --bench_iters=100
+benchmark_x86_cpus = ['x86', 'x86_64']
+if get_option('enable-test') and benchmark_x86_cpus.contains(host_machine.cpu_family())
+  executable(
+    'benchmark_x86_backend',
+    'benchmark_x86_backend.cpp',
+    include_directories: include_directories('models'),
+    dependencies: unittest_nntrainer_deps,
+    install: get_option('enable-test'),
+    install_dir: application_install_dir
+  )
+endif
+
 # DDTree core tests embed the golden vectors (ddtree_golden/build_golden.h), so
 # this target is defined standalone to add that directory to its include path
 # (the shared loop above can't set per-target include dirs). Embedding avoids a
