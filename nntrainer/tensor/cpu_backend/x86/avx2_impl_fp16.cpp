@@ -853,6 +853,231 @@ void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
 }
 
 // ============================================================
+// FP16 BLAS-like operations
+// ============================================================
+
+void saxpy(const unsigned int N, const float alpha, const _Float16 *X,
+           const unsigned int incX, _Float16 *Y, const unsigned int incY) {
+  if (incX == 1 && incY == 1) {
+    unsigned int i = 0;
+    unsigned int N16 = (N & ~15u);
+    __m256 alpha_v = _mm256_set1_ps(alpha);
+
+    // Main loop: process 16 elements per iteration via 256-bit loads
+    for (; i < N16; i += 16) {
+      __m256i x_raw = _mm256_loadu_si256((const __m256i *)(X + i));
+      __m256i y_raw = _mm256_loadu_si256((const __m256i *)(Y + i));
+
+      __m128i x_lo = _mm256_castsi256_si128(x_raw);
+      __m128i x_hi = _mm256_extracti128_si256(x_raw, 1);
+      __m128i y_lo = _mm256_castsi256_si128(y_raw);
+      __m128i y_hi = _mm256_extracti128_si256(y_raw, 1);
+
+      __m256 xf0 = _mm256_cvtph_ps(x_lo);
+      __m256 xf1 = _mm256_cvtph_ps(x_hi);
+      __m256 yf0 = _mm256_cvtph_ps(y_lo);
+      __m256 yf1 = _mm256_cvtph_ps(y_hi);
+
+      __m256 r0 = _mm256_fmadd_ps(alpha_v, xf0, yf0);
+      __m256 r1 = _mm256_fmadd_ps(alpha_v, xf1, yf1);
+
+      __m128i out_lo = _mm256_cvtps_ph(r0, _MM_FROUND_TO_NEAREST_INT);
+      __m128i out_hi = _mm256_cvtps_ph(r1, _MM_FROUND_TO_NEAREST_INT);
+      __m256i out =
+        _mm256_inserti128_si256(_mm256_castsi128_si256(out_lo), out_hi, 1);
+      _mm256_storeu_si256((__m256i *)(Y + i), out);
+    }
+
+    // Tail: process remaining 8 elements
+    if (i + 8 <= N) {
+      __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+      __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+      __m256 result = _mm256_fmadd_ps(alpha_v, x, y);
+      _mm_storeu_si128((__m128i *)(Y + i),
+                       _mm256_cvtps_ph(result, _MM_FROUND_TO_NEAREST_INT));
+      i += 8;
+    }
+
+    // Scalar tail
+    for (; i < N; ++i) {
+      Y[i] = static_cast<_Float16>(static_cast<float>(Y[i]) +
+                                   alpha * static_cast<float>(X[i]));
+    }
+  } else {
+    for (unsigned int i = 0; i < N; ++i) {
+      Y[i * incY] =
+        static_cast<_Float16>(static_cast<float>(Y[i * incY]) +
+                              alpha * static_cast<float>(X[i * incX]));
+    }
+  }
+}
+
+_Float16 sdot(const unsigned int N, const _Float16 *X, const unsigned int incX,
+              const _Float16 *Y, const unsigned int incY) {
+  assert(incX > 0 && incY > 0);
+  if (incX == 1 && incY == 1) {
+    unsigned int i = 0;
+    unsigned int N16 = (N & ~15u);
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+
+    // Main loop: 16 elements with dual accumulators to break dependency
+    for (; i < N16; i += 16) {
+      __m256i x_raw = _mm256_loadu_si256((const __m256i *)(X + i));
+      __m256i y_raw = _mm256_loadu_si256((const __m256i *)(Y + i));
+
+      __m256 xf0 = _mm256_cvtph_ps(_mm256_castsi256_si128(x_raw));
+      __m256 xf1 = _mm256_cvtph_ps(_mm256_extracti128_si256(x_raw, 1));
+      __m256 yf0 = _mm256_cvtph_ps(_mm256_castsi256_si128(y_raw));
+      __m256 yf1 = _mm256_cvtph_ps(_mm256_extracti128_si256(y_raw, 1));
+
+      acc0 = _mm256_fmadd_ps(xf0, yf0, acc0);
+      acc1 = _mm256_fmadd_ps(xf1, yf1, acc1);
+    }
+
+    // Merge accumulators and reduce
+    __m256 acc = _mm256_add_ps(acc0, acc1);
+
+    // Tail: process remaining 8 elements
+    if (i + 8 <= N) {
+      __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+      __m256 y = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(Y + i)));
+      acc = _mm256_fmadd_ps(x, y, acc);
+      i += 8;
+    }
+
+    float sum = hsum_avx(acc);
+
+    // Scalar tail
+    for (; i < N; ++i) {
+      sum += static_cast<float>(X[i]) * static_cast<float>(Y[i]);
+    }
+    return static_cast<_Float16>(sum);
+  } else {
+    float sum = 0.0f;
+    for (unsigned int i = 0; i < N; ++i) {
+      sum += static_cast<float>(X[i * incX]) * static_cast<float>(Y[i * incY]);
+    }
+    return static_cast<_Float16>(sum);
+  }
+}
+
+_Float16 snrm2(const unsigned int N, const _Float16 *X,
+               const unsigned int incX) {
+  if (incX == 1) {
+    unsigned int i = 0;
+    unsigned int N16 = (N & ~15u);
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+
+    // Main loop: 16 elements with dual accumulators
+    for (; i < N16; i += 16) {
+      __m256i x_raw = _mm256_loadu_si256((const __m256i *)(X + i));
+
+      __m256 xf0 = _mm256_cvtph_ps(_mm256_castsi256_si128(x_raw));
+      __m256 xf1 = _mm256_cvtph_ps(_mm256_extracti128_si256(x_raw, 1));
+
+      acc0 = _mm256_fmadd_ps(xf0, xf0, acc0);
+      acc1 = _mm256_fmadd_ps(xf1, xf1, acc1);
+    }
+
+    // Merge accumulators
+    __m256 acc = _mm256_add_ps(acc0, acc1);
+
+    // Tail: process remaining 8 elements
+    if (i + 8 <= N) {
+      __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+      acc = _mm256_fmadd_ps(x, x, acc);
+      i += 8;
+    }
+
+    float sum = hsum_avx(acc);
+
+    // Scalar tail
+    for (; i < N; ++i) {
+      float xf = static_cast<float>(X[i]);
+      sum += xf * xf;
+    }
+    return static_cast<_Float16>(std::sqrt(sum));
+  } else {
+    float sum = 0.0f;
+    for (unsigned int i = 0; i < N; ++i) {
+      float xf = static_cast<float>(X[i * incX]);
+      sum += xf * xf;
+    }
+    return static_cast<_Float16>(std::sqrt(sum));
+  }
+}
+
+void sscal(const unsigned int N, const float alpha, _Float16 *X,
+           const unsigned int incX) {
+  if (incX == 1) {
+    unsigned int i = 0;
+    unsigned int N16 = (N & ~15u);
+    __m256 alpha_v = _mm256_set1_ps(alpha);
+
+    // Main loop: process 16 elements per iteration via 256-bit loads
+    for (; i < N16; i += 16) {
+      __m256i x_raw = _mm256_loadu_si256((const __m256i *)(X + i));
+
+      __m128i x_lo = _mm256_castsi256_si128(x_raw);
+      __m128i x_hi = _mm256_extracti128_si256(x_raw, 1);
+
+      __m256 xf0 = _mm256_cvtph_ps(x_lo);
+      __m256 xf1 = _mm256_cvtph_ps(x_hi);
+
+      __m256 r0 = _mm256_mul_ps(alpha_v, xf0);
+      __m256 r1 = _mm256_mul_ps(alpha_v, xf1);
+
+      __m128i out_lo = _mm256_cvtps_ph(r0, _MM_FROUND_TO_NEAREST_INT);
+      __m128i out_hi = _mm256_cvtps_ph(r1, _MM_FROUND_TO_NEAREST_INT);
+      __m256i out =
+        _mm256_inserti128_si256(_mm256_castsi128_si256(out_lo), out_hi, 1);
+      _mm256_storeu_si256((__m256i *)(X + i), out);
+    }
+
+    // Tail: process remaining 8 elements
+    if (i + 8 <= N) {
+      __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+      __m256 result = _mm256_mul_ps(alpha_v, x);
+      _mm_storeu_si128((__m128i *)(X + i),
+                       _mm256_cvtps_ph(result, _MM_FROUND_TO_NEAREST_INT));
+      i += 8;
+    }
+
+    // Scalar tail
+    for (; i < N; ++i) {
+      X[i] = static_cast<_Float16>(alpha * static_cast<float>(X[i]));
+    }
+  } else {
+    for (unsigned int i = 0; i < N; ++i) {
+      X[i * incX] =
+        static_cast<_Float16>(alpha * static_cast<float>(X[i * incX]));
+    }
+  }
+}
+
+void custom_scopy(const unsigned int N, const _Float16 *X,
+                  const unsigned int incX, _Float16 *Y,
+                  const unsigned int incY) {
+  if (incX == 1 && incY == 1) {
+    unsigned int i = 0;
+    unsigned int N16 = (N & ~15u);
+    for (; i < N16; i += 16) {
+      __m256i data = _mm256_loadu_si256((const __m256i *)(X + i));
+      _mm256_storeu_si256((__m256i *)(Y + i), data);
+    }
+    for (; i < N; ++i) {
+      Y[i] = X[i];
+    }
+  } else {
+    for (unsigned int i = 0; i < N; ++i) {
+      Y[i * incY] = X[i * incX];
+    }
+  }
+}
+
+// ============================================================
 // FP16 activation/norm functions
 // ============================================================
 
@@ -1071,6 +1296,140 @@ void swiglu(const unsigned int N, _Float16 *X, _Float16 *Y, _Float16 *Z) {
   }
 
   _mm_setcsr(oldcsr);
+}
+
+// ============================================================
+// FP16 Group B functions
+// ============================================================
+
+unsigned int isamax(const unsigned int N, const _Float16 *X,
+                    const unsigned int incX) {
+  if (incX == 1 && N >= 8) {
+    unsigned int N8 = (N & ~7u);
+    __m256 sign_mask = _mm256_set1_ps(-0.0f);
+    unsigned int max_idx = 0;
+    float max_abs = 0.0f;
+
+    for (unsigned int i = 0; i < N8; i += 8) {
+      __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(X + i)));
+      __m256 abs_x = _mm256_andnot_ps(sign_mask, x);
+      // Check each element individually for max tracking
+      alignas(32) float buf[8];
+      _mm256_storeu_ps(buf, abs_x);
+      for (int j = 0; j < 8; ++j) {
+        if (buf[j] > max_abs) {
+          max_abs = buf[j];
+          max_idx = i + j;
+        }
+      }
+    }
+    for (unsigned int i = N8; i < N; ++i) {
+      float cur = std::abs(static_cast<float>(X[i]));
+      if (cur > max_abs) {
+        max_abs = cur;
+        max_idx = i;
+      }
+    }
+    return max_idx;
+  } else {
+    unsigned int max_idx = 0;
+    float max_val = 0.0f;
+    for (unsigned int i = 0; i < N; ++i) {
+      float cur = std::abs(static_cast<float>(X[i * incX]));
+      if (cur > max_val) {
+        max_val = cur;
+        max_idx = i;
+      }
+    }
+    return max_idx;
+  }
+}
+
+void transpose_matrix(const unsigned int M, const unsigned int N,
+                      const _Float16 *src, unsigned int ld_src, _Float16 *dst,
+                      unsigned int ld_dst) {
+  for (unsigned int i = 0; i < M; i++) {
+    for (unsigned int j = 0; j < N; j++) {
+      dst[i + j * ld_dst] = src[i * ld_src + j];
+    }
+  }
+}
+
+void scopy_int4_to_float16(const unsigned int N, const uint8_t *X,
+                           const unsigned int incX, _Float16 *Y,
+                           const unsigned int incY) {
+  if (incX == 1 && incY == 1) {
+    unsigned int i = 0;
+    unsigned int N8 = (N & ~7u);
+    for (; i < N8; i += 8) {
+      alignas(32) float buf[16];
+      for (int j = 0; j < 8; ++j) {
+        buf[2 * j] = static_cast<float>(X[i + j] >> 4);
+        buf[2 * j + 1] = static_cast<float>(X[i + j] & 0x0f);
+      }
+      __m256 v0 = _mm256_loadu_ps(buf);
+      __m256 v1 = _mm256_loadu_ps(buf + 8);
+      _mm_storeu_si128((__m128i *)(Y + 2 * i),
+                       _mm256_cvtps_ph(v0, _MM_FROUND_TO_NEAREST_INT));
+      _mm_storeu_si128((__m128i *)(Y + 2 * i + 8),
+                       _mm256_cvtps_ph(v1, _MM_FROUND_TO_NEAREST_INT));
+    }
+    for (; i < N; ++i) {
+      Y[2 * i] = static_cast<_Float16>(X[i] >> 4);
+      Y[2 * i + 1] = static_cast<_Float16>(X[i] & 0x0f);
+    }
+  } else {
+    for (unsigned int idx = 0; idx < N; idx++) {
+      Y[2 * idx] = static_cast<_Float16>(X[idx] >> 4);
+      Y[2 * idx + 1] = static_cast<_Float16>(X[idx] & 0x0f);
+    }
+  }
+}
+
+void scopy_int8_to_float16(const unsigned int N, const uint8_t *X,
+                           const unsigned int incX, _Float16 *Y,
+                           const unsigned int incY) {
+  if (incX == 1 && incY == 1) {
+    unsigned int i = 0;
+    unsigned int N8 = (N & ~7u);
+    for (; i < N8; i += 8) {
+      __m256i xi =
+        _mm256_cvtepu8_epi32(_mm_loadl_epi64((const __m128i *)(X + i)));
+      __m256 xf = _mm256_cvtepi32_ps(xi);
+      _mm_storeu_si128((__m128i *)(Y + i),
+                       _mm256_cvtps_ph(xf, _MM_FROUND_TO_NEAREST_INT));
+    }
+    for (; i < N; ++i) {
+      Y[i] = static_cast<_Float16>(X[i]);
+    }
+  } else {
+    for (unsigned int idx = 0; idx < N; idx++) {
+      Y[idx * incY] = static_cast<_Float16>(X[idx * incX]);
+    }
+  }
+}
+
+void scopy_int8_to_float16(const unsigned int N, const int8_t *X,
+                           const unsigned int incX, _Float16 *Y,
+                           const unsigned int incY) {
+  if (incX == 1 && incY == 1) {
+    unsigned int i = 0;
+    unsigned int N8 = (N & ~7u);
+    for (; i < N8; i += 8) {
+      __m256i xi =
+        _mm256_cvtepi8_epi32(_mm_loadl_epi64((const __m128i *)(X + i)));
+      __m256 xf = _mm256_cvtepi32_ps(xi);
+      _mm_storeu_si128((__m128i *)(Y + i),
+                       _mm256_cvtps_ph(xf, _MM_FROUND_TO_NEAREST_INT));
+    }
+    for (; i < N; ++i) {
+      Y[i] = static_cast<_Float16>(X[i]);
+    }
+  } else {
+    for (unsigned int idx = 0; idx < N; idx++) {
+      Y[idx * incY] = static_cast<_Float16>(X[idx * incX]);
+    }
+  }
 }
 
 } // namespace nntrainer::avx2

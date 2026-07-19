@@ -112,27 +112,24 @@ void hsgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,
 
 void sscal(const unsigned int N, const float alpha, _FP16 *X,
            const unsigned int incX) {
-  __fallback_sscal(N, alpha, X, incX);
+  avx2::sscal(N, alpha, X, incX);
 }
 
 _FP16 snrm2(const unsigned int N, const _FP16 *X, const unsigned int incX) {
   assert(incX > 0);
-  _FP16 sum = __fallback_snrm2(N, X, incX);
+  _FP16 sum = avx2::snrm2(N, X, incX);
   return sum;
 }
 
 void scopy(const unsigned int N, const _FP16 *X, const unsigned int incX,
            _FP16 *Y, const unsigned int incY) {
-  if (incX == 1 && incY == 1) {
-    __fallback_scopy(N, X, incX, Y, incY);
-  }
+  avx2::custom_scopy(N, X, incX, Y, incY);
 }
 
 void scopy(const unsigned int N, const float *X, const unsigned int incX,
            _FP16 *Y, const unsigned int incY) {
   if (incX == 1 && incY == 1) {
     nntrainer::avx2::vcvt_f32_f16(N, X, Y);
-
   } else {
     __fallback_scopy(N, X, incX, Y, incY);
   }
@@ -150,33 +147,30 @@ void scopy(const unsigned int N, const _FP16 *X, const unsigned int incX,
 void scopy_int4_to_float16(const unsigned int N, const uint8_t *X,
                            const unsigned int incX, _FP16 *Y,
                            const unsigned int incY) {
-  if (incX == 1 && incY == 1) {
-    __fallback_scopy_int4_to_float16(N, X, incX, Y, incY);
-  }
+  avx2::scopy_int4_to_float16(N, X, incX, Y, incY);
 }
 
 void scopy_int8_to_float16(const unsigned int N, const uint8_t *X,
                            const unsigned int incX, _FP16 *Y,
                            const unsigned int incY) {
-  __fallback_scopy_int8_to_float16(N, X, incX, Y, incY);
+  avx2::scopy_int8_to_float16(N, X, incX, Y, incY);
 }
 
 void scopy_int8_to_float16(const unsigned int N, const int8_t *X,
                            const unsigned int incX, _FP16 *Y,
                            const unsigned int incY) {
-  __fallback_scopy_int8_to_float16(N, X, incX, Y, incY);
+  avx2::scopy_int8_to_float16(N, X, incX, Y, incY);
 }
 
 _FP16 sdot(const unsigned int N, const _FP16 *X, const unsigned int incX,
            const _FP16 *Y, const unsigned int incY) {
   assert(incX > 0 && incY > 0);
-  _FP16 ret = 0;
-  return __fallback_sdot(N, X, incX, Y, incY);
+  return avx2::sdot(N, X, incX, Y, incY);
 }
 
 void saxpy(const unsigned int N, const float alpha, const _FP16 *X,
            const unsigned int incX, _FP16 *Y, const unsigned int incY) {
-  __fallback_saxpy(N, alpha, X, incX, Y, incY);
+  avx2::saxpy(N, alpha, X, incX, Y, incY);
 }
 
 void sgemm(const unsigned int TStorageOrder, bool TransA, bool TransB,
@@ -266,7 +260,7 @@ void ele_div(const unsigned N, const _FP16 *X, const _FP16 *Y, _FP16 *Z,
 unsigned int isamax(const unsigned int N, const _FP16 *X,
                     const unsigned int incX) {
   unsigned int max_idx = 0;
-  max_idx = __fallback_isamax(N, X, incX);
+  max_idx = avx2::isamax(N, X, incX);
   return max_idx;
 }
 
@@ -277,7 +271,7 @@ void inv_sqrt_inplace(const unsigned int N, _FP16 *X) {
 void transpose_matrix(const unsigned int M, const unsigned int N,
                       const _FP16 *src, unsigned int ld_src, _FP16 *dst,
                       unsigned int ld_dst) {
-  __fallback_transpose_matrix(M, N, src, ld_src, dst, ld_dst);
+  avx2::transpose_matrix(M, N, src, ld_src, dst, ld_dst);
 }
 
 bool is_valid(const unsigned int N, const _FP16 *input) {
