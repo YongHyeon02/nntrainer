@@ -66,6 +66,11 @@ void ele_sub(const unsigned int N, const _Float16 *X, const _Float16 *Y,
 void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
              _Float16 *Z, float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride);
+
+_Float16 max_val(const unsigned int N, _Float16 *X);
+void softmax(const unsigned int N, _Float16 *X, _Float16 *Y);
+void inv_sqrt_inplace(const unsigned int N, _Float16 *X);
+void swiglu(const unsigned int N, _Float16 *X, _Float16 *Y, _Float16 *Z);
 #endif
 
 /**

@@ -271,7 +271,7 @@ unsigned int isamax(const unsigned int N, const _FP16 *X,
 }
 
 void inv_sqrt_inplace(const unsigned int N, _FP16 *X) {
-  __fallback_inv_sqrt_inplace(N, X);
+  avx2::inv_sqrt_inplace(N, X);
 }
 
 void transpose_matrix(const unsigned int M, const unsigned int N,
@@ -291,13 +291,13 @@ void compute_rotary_embedding_value(unsigned int dim, unsigned int half_,
 }
 
 void swiglu(const unsigned int N, _FP16 *X, _FP16 *Y, _FP16 *Z) {
-  __fallback_swiglu(N, X, Y, Z);
+  avx2::swiglu(N, X, Y, Z);
 }
 
-_FP16 max_val(const unsigned int N, _FP16 *X) { return __fallback_max(N, X); }
+_FP16 max_val(const unsigned int N, _FP16 *X) { return avx2::max_val(N, X); }
 
 void softmax(const unsigned int N, _FP16 *X, _FP16 *Y) {
-  __fallback_softmax(N, X, Y);
+  avx2::softmax(N, X, Y);
 }
 
 template <> void dequantize_row_q8_0(const void *x_raw, _FP16 *y, int64_t k) {

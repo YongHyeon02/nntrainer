@@ -2043,6 +2043,143 @@ TEST(nntrainer_cpu_backend_standalone, ele_div_fp16_ostr_2) {
   run_ele_div_fp16_test(256, 1.f, 0.f, 1, 2);
 }
 
+TEST(nntrainer_cpu_backend_standalone, max_val_fp16_3072) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X = generate_random_vector<_FP16, false>(N);
+
+    _FP16 ref = nntrainer::__fallback_max(N, X.data());
+    _FP16 result = nntrainer::max_val(N, X.data());
+
+    ASSERT_NEAR(static_cast<float>(ref), static_cast<float>(result), 0.001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, max_val_fp16_7) {
+  const unsigned int N = 7;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X = generate_random_vector<_FP16, false>(N);
+
+    _FP16 ref = nntrainer::__fallback_max(N, X.data());
+    _FP16 result = nntrainer::max_val(N, X.data());
+
+    ASSERT_NEAR(static_cast<float>(ref), static_cast<float>(result), 0.001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, softmax_fp16_3072) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X = generate_random_vector<_FP16, false>(N);
+    std::vector<_FP16> Y(N), Y_ref(N);
+
+    nntrainer::__fallback_softmax(N, X.data(), Y_ref.data());
+    nntrainer::softmax(N, X.data(), Y.data());
+
+    auto mse_val = mse<_FP16, _FP16>(Y_ref.data(), Y.data(), N);
+    ASSERT_LE(mse_val, 0.005f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, softmax_fp16_7) {
+  const unsigned int N = 7;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X = generate_random_vector<_FP16, false>(N);
+    std::vector<_FP16> Y(N), Y_ref(N);
+
+    nntrainer::__fallback_softmax(N, X.data(), Y_ref.data());
+    nntrainer::softmax(N, X.data(), Y.data());
+
+    auto mse_val = mse<_FP16, _FP16>(Y_ref.data(), Y.data(), N);
+    ASSERT_LE(mse_val, 0.005f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, inv_sqrt_inplace_fp16_3072) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X =
+      generate_random_vector<_FP16, false>(N, 0.01f, 10.0f);
+    std::vector<_FP16> X_ref = X;
+
+    nntrainer::__fallback_inv_sqrt_inplace(N, X_ref.data());
+    nntrainer::inv_sqrt_inplace(N, X.data());
+
+    auto mse_val = mse<_FP16, _FP16>(X_ref.data(), X.data(), N);
+    ASSERT_LE(mse_val, 0.005f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, inv_sqrt_inplace_fp16_with_zeros) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X =
+      generate_random_vector<_FP16, false>(N, 0.01f, 10.0f);
+    X[0] = (_FP16)0.0f;
+    X[7] = (_FP16)0.0f;
+    X[8] = (_FP16)0.0f;
+    X[N / 2] = (_FP16)0.0f;
+    X[N - 1] = (_FP16)0.0f;
+    std::vector<_FP16> X_ref = X;
+
+    nntrainer::__fallback_inv_sqrt_inplace(N, X_ref.data());
+    nntrainer::inv_sqrt_inplace(N, X.data());
+
+    for (unsigned int j = 0; j < N; j++) {
+      if (std::isinf(static_cast<float>(X_ref[j]))) {
+        ASSERT_TRUE(std::isinf(static_cast<float>(X[j])))
+          << "Expected inf at index " << j << ", got "
+          << static_cast<float>(X[j]);
+      } else {
+        ASSERT_FALSE(std::isnan(static_cast<float>(X[j])))
+          << "Unexpected NaN at index " << j;
+        ASSERT_NEAR(static_cast<float>(X[j]), static_cast<float>(X_ref[j]),
+                    0.01f);
+      }
+    }
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, swiglu_fp16_3072) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X(N), X_ref(N);
+    std::vector<_FP16> Y = generate_random_vector<_FP16, false>(N, -2.0f, 2.0f);
+    std::vector<_FP16> Z = generate_random_vector<_FP16, false>(N, -2.0f, 2.0f);
+    std::vector<_FP16> Y_ref = Y, Z_ref = Z;
+
+    nntrainer::__fallback_swiglu(N, X_ref.data(), Y_ref.data(), Z_ref.data());
+    nntrainer::swiglu(N, X.data(), Y.data(), Z.data());
+
+    auto mse_val = mse<_FP16, _FP16>(X_ref.data(), X.data(), N);
+    ASSERT_LE(mse_val, 0.005f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, swiglu_fp16_7) {
+  const unsigned int N = 7;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X(N), X_ref(N);
+    std::vector<_FP16> Y = generate_random_vector<_FP16, false>(N, -2.0f, 2.0f);
+    std::vector<_FP16> Z = generate_random_vector<_FP16, false>(N, -2.0f, 2.0f);
+    std::vector<_FP16> Y_ref = Y, Z_ref = Z;
+
+    nntrainer::__fallback_swiglu(N, X_ref.data(), Y_ref.data(), Z_ref.data());
+    nntrainer::swiglu(N, X.data(), Y.data(), Z.data());
+
+    auto mse_val = mse<_FP16, _FP16>(X_ref.data(), X.data(), N);
+    ASSERT_LE(mse_val, 0.005f);
+  }
+}
+
 #endif // ENABLE_FP16
 
 int main(int argc, char **argv) {
