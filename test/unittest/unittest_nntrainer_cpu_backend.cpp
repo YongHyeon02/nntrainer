@@ -446,6 +446,9 @@ TEST(nntrainer_cpu_backend_standalone, q4_0_repack_unpack_dequantize) {
   }
 }
 
+/**
+ * @brief test for gemm_q4_0
+ */
 float test_gemm_q4_0(const uint32_t M, const uint32_t K, const uint32_t N,
                      const float *weights, const float *activations,
                      std::vector<float> &ref_dst, bool print = false) {
@@ -492,6 +495,9 @@ float test_gemm_q4_0(const uint32_t M, const uint32_t K, const uint32_t N,
   return mean_squared_error;
 }
 
+/**
+ * @brief test for gemm_q4_K
+ */
 float test_gemm_q4_K(const uint32_t M, const uint32_t K, const uint32_t N,
                      const float *weights, const float *activations,
                      std::vector<float> &ref_dst, bool print = false) {
@@ -535,6 +541,9 @@ float test_gemm_q4_K(const uint32_t M, const uint32_t K, const uint32_t N,
   return mean_squared_error;
 }
 
+/**
+ * @brief test for gemm_q6_K
+ */
 float test_gemm_q6_K(const uint32_t M, const uint32_t K, const uint32_t N,
                      const float *weights, const float *activations,
                      std::vector<float> &ref_dst, bool print = false) {
@@ -572,6 +581,9 @@ float test_gemm_q6_K(const uint32_t M, const uint32_t K, const uint32_t N,
   return mean_squared_error;
 }
 
+/**
+ * @brief run quantization tests
+ */
 static void run_quant_test(const uint32_t M, const uint32_t K, const uint32_t N,
                            float &q4_0_mse, float &q4_k_mse, float &q6_k_mse,
                            bool print = false) {
@@ -668,6 +680,9 @@ TEST(nntrainer_cpu_backend_standalone, quant_GEMV_1x512x512) {
   ASSERT_LE(q6_k_mse, q4_k_mse);
 }
 
+/**
+ * @brief run vec dot tests
+ */
 static void run_vec_dot_test(const uint32_t K, bool print = false) {
   const int TEST_CNT = 20;
   nanoseconds ref_time = (nanoseconds)0;
@@ -738,6 +753,9 @@ TEST(nntrainer_cpu_backend_standalone, quant_q_6_K_DOT_10240) {
   run_vec_dot_test(K);
 }
 
+/**
+ * @brief run elementwise multiplication test (Z = X ⊙ alpha * Y + beta * Z)
+ */
 static void run_ele_mul_test(const unsigned int N, float alpha, float beta,
                              unsigned int i_stride, unsigned int o_stride,
                              bool print = false) {
@@ -818,6 +836,9 @@ TEST(nntrainer_cpu_backend_standalone, ele_mul_3072_istr_16_ostr_16) {
   run_ele_mul_test(N, alpha, beta, i_stride, o_stride);
 }
 
+/**
+ * @brief run elementwise addition test (Z = X + alpha * Y + beta * Z)
+ */
 static void run_ele_add_test(const unsigned int N, float alpha, float beta,
                              unsigned int i_stride, unsigned int o_stride,
                              bool print = false) {
