@@ -1584,6 +1584,86 @@ DECLARE_transform_int4_test_K_N(1024, 648, 64);
 DECLARE_transform_int4_test_K_N(1024, 648, 128);
 DECLARE_transform_int4_test_K_N(3072, 8192, 32);
 
+// ============================================================================
+// P1: AVX2 replacement tests for formerly-fallback FP32 functions
+// ============================================================================
+
+static void run_ele_sub_test(const unsigned int N, float alpha, float beta,
+                             unsigned int i_stride, unsigned int o_stride) {
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<float> X =
+      generate_random_vector<float, false>((size_t)N * o_stride);
+    std::vector<float> Y = generate_random_vector<float, false>(
+      std::max<size_t>(1, (size_t)N * i_stride));
+    std::vector<float> Z =
+      generate_random_vector<float, false>((size_t)N * o_stride);
+    std::vector<float> Z_ref = Z;
+
+    nntrainer::__fallback_ele_sub(N, X.data(), Y.data(), Z_ref.data(), alpha,
+                                  beta, i_stride, o_stride);
+    nntrainer::ele_sub(N, X.data(), Y.data(), Z.data(), alpha, beta, i_stride,
+                       o_stride);
+
+    auto mean_squared_error = compute_mse(1, N, Z_ref, Z, false);
+    ASSERT_LE(mean_squared_error, 0.00001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, ele_sub_3072_istr_0) {
+  run_ele_sub_test(3072, 1.f, 0.f, 0, 1);
+}
+
+TEST(nntrainer_cpu_backend_standalone, ele_sub_3072_istr_1) {
+  run_ele_sub_test(3072, 1.f, 0.f, 1, 1);
+}
+
+TEST(nntrainer_cpu_backend_standalone, ele_sub_3072_istr_16_ostrid_16) {
+  run_ele_sub_test(3072, 3.f, 2.f, 16, 16);
+}
+
+TEST(nntrainer_cpu_backend_standalone, ele_sub_3072_alpha1_beta0_istr_2) {
+  run_ele_sub_test(3072, 1.f, 0.f, 2, 1);
+}
+
+static void run_ele_div_test(const unsigned int N, float alpha, float beta,
+                             unsigned int i_stride, unsigned int o_stride) {
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<float> X =
+      generate_random_vector<float, false>((size_t)N * o_stride);
+    std::vector<float> Y = generate_random_vector<float, false>(
+      std::max<size_t>(1, (size_t)N * i_stride), 0.1f, 1.0f);
+    std::vector<float> Z =
+      generate_random_vector<float, false>((size_t)N * o_stride);
+    std::vector<float> Z_ref = Z;
+
+    nntrainer::__fallback_ele_div(N, X.data(), Y.data(), Z_ref.data(), alpha,
+                                  beta, i_stride, o_stride);
+    nntrainer::ele_div(N, X.data(), Y.data(), Z.data(), alpha, beta, i_stride,
+                       o_stride);
+
+    auto mean_squared_error = compute_mse(1, N, Z_ref, Z, false);
+    ASSERT_LE(mean_squared_error, 0.00001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, ele_div_3072_istr_0) {
+  run_ele_div_test(3072, 1.f, 0.f, 0, 1);
+}
+
+TEST(nntrainer_cpu_backend_standalone, ele_div_3072_istr_1) {
+  run_ele_div_test(3072, 1.f, 0.f, 1, 1);
+}
+
+TEST(nntrainer_cpu_backend_standalone, ele_div_3072_istr_16_ostrid_16) {
+  run_ele_div_test(3072, 3.f, 2.f, 16, 16);
+}
+
+TEST(nntrainer_cpu_backend_standalone, ele_div_3072_alpha1_beta0_istr_2) {
+  run_ele_div_test(3072, 1.f, 0.f, 2, 1);
+}
+
 int main(int argc, char **argv) {
   int result = -1;
 
