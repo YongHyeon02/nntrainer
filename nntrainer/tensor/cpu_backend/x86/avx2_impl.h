@@ -15,6 +15,7 @@
 #define __AVX2_IMPL_H_
 #ifdef __cplusplus
 
+#include "avx2_mathfun.h"
 #include <cstdint>
 #include <limits.h>
 #include <limits>
@@ -157,6 +158,42 @@ void softmax(const unsigned int N, float *X, float *Y);
  * @param X float * for Vector X
  */
 void inv_sqrt_inplace(const unsigned int N, float *X);
+
+/**
+ * @brief sine function : Y[i] = sin(alpha * X[i]) * beta
+ *
+ * @param N number of elements
+ * @param X float * input
+ * @param Y float * output
+ * @param alpha scaling for input
+ * @param beta scaling for output
+ */
+void sine(const unsigned int N, float *X, float *Y, float alpha, float beta);
+
+/**
+ * @brief cosine function : Y[i] = cos(alpha * X[i]) * beta
+ *
+ * @param N number of elements
+ * @param X float * input
+ * @param Y float * output
+ * @param alpha scaling for input
+ * @param beta scaling for output
+ */
+void cosine(const unsigned int N, float *X, float *Y, float alpha, float beta);
+
+/**
+ * @brief compute cos and sin of angles, then duplicate to second half
+ *
+ * @param N_half half size of output arrays
+ * @param angle float * input angles
+ * @param cos_ float * output cosines (size 2*N_half)
+ * @param sin_ float * output sines (size 2*N_half)
+ * @param from starting index for angle calculation
+ * @param attention_scaling scaling factor for cos and sin values
+ */
+void calc_trigonometric_vals_dup(unsigned int N_half, float *angle, float *cos_,
+                                 float *sin_, unsigned int from,
+                                 float attention_scaling);
 
 /**
  * @brief swiglu function with AVX : X = (Y / (1 + exp( -Y ))) * Z

@@ -144,12 +144,12 @@ void scopy_int8_to_float32(const unsigned int N, const int8_t *X,
 
 template <>
 void sine(const unsigned int N, float *X, float *Y, float alpha, float beta) {
-  __fallback_sine(N, X, Y, alpha, beta);
+  nntrainer::avx2::sine(N, X, Y, alpha, beta);
 }
 
 template <>
 void cosine(const unsigned int N, float *X, float *Y, float alpha, float beta) {
-  __fallback_cosine(N, X, Y, alpha, beta);
+  nntrainer::avx2::cosine(N, X, Y, alpha, beta);
 }
 
 void inv_sqrt_inplace(const unsigned int N, float *X) {
@@ -287,8 +287,8 @@ template <>
 void calc_trigonometric_vals_dup(unsigned int N_half, float *angle, float *cos_,
                                  float *sin_, unsigned int from,
                                  float attention_scaling) {
-  __fallback_calc_trigonometric_vals_dup(N_half, angle, cos_, sin_, from,
-                                         attention_scaling);
+  nntrainer::avx2::calc_trigonometric_vals_dup(N_half, angle, cos_, sin_, from,
+                                               attention_scaling);
 }
 
 void swiglu(const unsigned int N, float *X, float *Y, float *Z) {
