@@ -770,6 +770,69 @@ void gelu_v2(const unsigned int N, const float *X, float *Y) {
   }
 }
 
+float max_val(const unsigned int N, float *X) {
+  unsigned int i = 0;
+  __m256 vmax = _mm256_set1_ps(-std::numeric_limits<float>::infinity());
+
+  for (; i + 8 <= N; i += 8) {
+    __m256 x = _mm256_loadu_ps(&X[i]);
+    vmax = _mm256_max_ps(vmax, x);
+  }
+
+  // Horizontal max reduction
+  __m128 hi = _mm256_extractf128_ps(vmax, 1);
+  __m128 lo = _mm256_castps256_ps128(vmax);
+  lo = _mm_max_ps(lo, hi);
+  __m128 shuf = _mm_movehl_ps(lo, lo);
+  lo = _mm_max_ps(lo, shuf);
+  shuf = _mm_movehdup_ps(lo);
+  lo = _mm_max_ss(lo, shuf);
+  float result = _mm_cvtss_f32(lo);
+
+  for (; i < N; ++i) {
+    result = std::max(result, X[i]);
+  }
+  return result;
+}
+
+void softmax(const unsigned int N, float *X, float *Y) {
+  // Step 1: find max
+  float max_x = max_val(N, X);
+  __m256 vmax = _mm256_set1_ps(max_x);
+
+  // Step 2: exp(x - max) and accumulate sum
+  unsigned int i = 0;
+  unsigned int N8 = (N & ~(7));
+  __m256 vsum = _mm256_setzero_ps();
+
+  for (; i < N8; i += 8) {
+    __m256 x = _mm256_loadu_ps(&X[i]);
+    __m256 e = exp256_ps(_mm256_sub_ps(x, vmax));
+    _mm256_storeu_ps(&Y[i], e);
+    vsum = _mm256_add_ps(vsum, e);
+  }
+
+  float sum = hsum_avx(vsum);
+  for (; i < N; ++i) {
+    float e = std::exp(X[i] - max_x);
+    Y[i] = e;
+    sum += e;
+  }
+
+  // Step 3: normalize
+  float inv_sum = 1.0f / sum;
+  __m256 vinv = _mm256_set1_ps(inv_sum);
+
+  i = 0;
+  for (; i < N8; i += 8) {
+    __m256 y = _mm256_loadu_ps(&Y[i]);
+    _mm256_storeu_ps(&Y[i], _mm256_mul_ps(y, vinv));
+  }
+  for (; i < N; ++i) {
+    Y[i] *= inv_sum;
+  }
+}
+
 void ele_mul(const unsigned int N, const float *X, const float *Y, float *Z,
              float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {

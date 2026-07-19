@@ -103,6 +103,24 @@ void transpose_matrix(const unsigned int M, const unsigned int N,
                       unsigned int ld_dst);
 
 /**
+ * @brief returns maximum value of the vector X
+ *
+ * @param N number of elements in X
+ * @param X float * for Vector X
+ * @return float maximum value of vector X
+ */
+float max_val(const unsigned int N, float *X);
+
+/**
+ * @brief softmax function y_i = exp(x_i) / sum( exp(x_i) )
+ *
+ * @param N number of elements in X
+ * @param X float * for Vector X (input)
+ * @param Y float * for Vector Y (output)
+ */
+void softmax(const unsigned int N, float *X, float *Y);
+
+/**
  * @brief swiglu function with AVX : X = (Y / (1 + exp( -Y ))) * Z
  *
  * @param N number of elements in X

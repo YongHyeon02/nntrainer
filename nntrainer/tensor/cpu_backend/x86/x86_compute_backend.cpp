@@ -320,10 +320,12 @@ void tanh_gelu_v2_mul(const unsigned int N, float *X, float *Y, float *Z) {
   __fallback_tanh_gelu_mul(N, X, Y, Z);
 }
 
-float max_val(const unsigned int N, float *X) { return __fallback_max(N, X); }
+float max_val(const unsigned int N, float *X) {
+  return nntrainer::avx2::max_val(N, X);
+}
 
 void softmax(const unsigned int N, float *X, float *Y) {
-  __fallback_softmax(N, X, Y);
+  nntrainer::avx2::softmax(N, X, Y);
 }
 
 template <>

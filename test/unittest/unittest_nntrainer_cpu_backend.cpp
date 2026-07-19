@@ -1664,6 +1664,34 @@ TEST(nntrainer_cpu_backend_standalone, ele_div_3072_alpha1_beta0_istr_2) {
   run_ele_div_test(3072, 1.f, 0.f, 2, 1);
 }
 
+TEST(nntrainer_cpu_backend_standalone, max_val_3072) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<float> X = generate_random_vector<float, false>(N);
+
+    float ref = nntrainer::__fallback_max(N, X.data());
+    float result = nntrainer::max_val(N, X.data());
+
+    ASSERT_FLOAT_EQ(ref, result);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, softmax_3072) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<float> X = generate_random_vector<float, false>(N);
+    std::vector<float> Y(N), Y_ref(N);
+
+    nntrainer::__fallback_softmax(N, X.data(), Y_ref.data());
+    nntrainer::softmax(N, X.data(), Y.data());
+
+    auto mse = compute_mse(1, N, Y_ref, Y, false);
+    ASSERT_LE(mse, 0.00001f);
+  }
+}
+
 int main(int argc, char **argv) {
   int result = -1;
 
