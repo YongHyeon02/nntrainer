@@ -151,6 +151,14 @@ float max_val(const unsigned int N, float *X);
 void softmax(const unsigned int N, float *X, float *Y);
 
 /**
+ * @brief inversed squared root transformation inplace : X[i] = 1 / sqrt(X[i])
+ *
+ * @param N size of X
+ * @param X float * for Vector X
+ */
+void inv_sqrt_inplace(const unsigned int N, float *X);
+
+/**
  * @brief swiglu function with AVX : X = (Y / (1 + exp( -Y ))) * Z
  *
  * @param N number of elements in X

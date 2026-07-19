@@ -153,7 +153,7 @@ void cosine(const unsigned int N, float *X, float *Y, float alpha, float beta) {
 }
 
 void inv_sqrt_inplace(const unsigned int N, float *X) {
-  __fallback_inv_sqrt_inplace(N, X);
+  nntrainer::avx2::inv_sqrt_inplace(N, X);
 }
 
 void ele_mul(const unsigned int N, const float *X, const float *Y, float *Z,

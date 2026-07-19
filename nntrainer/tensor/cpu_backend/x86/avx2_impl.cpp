@@ -872,6 +872,31 @@ void softmax(const unsigned int N, float *X, float *Y) {
   }
 }
 
+void inv_sqrt_inplace(const unsigned int N, float *X) {
+  unsigned int i = 0;
+  const __m256 zero = _mm256_setzero_ps();
+  const __m256 inf_val = _mm256_set1_ps(INFINITY);
+  const __m256 three_half = _mm256_set1_ps(1.5f);
+  const __m256 half = _mm256_set1_ps(0.5f);
+
+  for (; i + 8 <= N; i += 8) {
+    __m256 x = _mm256_loadu_ps(&X[i]);
+    __m256 is_zero = _mm256_cmp_ps(x, zero, _CMP_EQ_OQ);
+    __m256 est = _mm256_rsqrt_ps(x);
+    // Newton-Raphson: y = y * (1.5 - 0.5 * x * y * y)
+    __m256 half_x = _mm256_mul_ps(half, x);
+    __m256 yy = _mm256_mul_ps(est, est);
+    __m256 refined =
+      _mm256_mul_ps(est, _mm256_fnmadd_ps(half_x, yy, three_half));
+    refined = _mm256_blendv_ps(refined, inf_val, is_zero);
+    _mm256_storeu_ps(&X[i], refined);
+  }
+
+  for (; i < N; ++i) {
+    X[i] = 1.0f / std::sqrt(X[i]);
+  }
+}
+
 void ele_mul(const unsigned int N, const float *X, const float *Y, float *Z,
              float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {

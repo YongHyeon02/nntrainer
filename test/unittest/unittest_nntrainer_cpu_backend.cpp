@@ -1744,6 +1744,51 @@ TEST(nntrainer_cpu_backend_standalone, softmax_3072) {
   }
 }
 
+TEST(nntrainer_cpu_backend_standalone, inv_sqrt_inplace_3072) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<float> X =
+      generate_random_vector<float, false>(N, 0.01f, 10.0f);
+    std::vector<float> X_ref = X;
+
+    nntrainer::__fallback_inv_sqrt_inplace(N, X_ref.data());
+    nntrainer::inv_sqrt_inplace(N, X.data());
+
+    auto mse = compute_mse(1, N, X_ref, X, false);
+    ASSERT_LE(mse, 0.00001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, inv_sqrt_inplace_with_zeros) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<float> X =
+      generate_random_vector<float, false>(N, 0.01f, 10.0f);
+    // Insert zeros at various positions (boundary, middle, tail)
+    X[0] = 0.0f;
+    X[7] = 0.0f; // AVX2 boundary
+    X[8] = 0.0f; // start of second AVX2 chunk
+    X[N / 2] = 0.0f;
+    X[N - 1] = 0.0f; // scalar tail
+    std::vector<float> X_ref = X;
+
+    nntrainer::__fallback_inv_sqrt_inplace(N, X_ref.data());
+    nntrainer::inv_sqrt_inplace(N, X.data());
+
+    for (unsigned int j = 0; j < N; j++) {
+      if (std::isinf(X_ref[j])) {
+        ASSERT_TRUE(std::isinf(X[j]))
+          << "Expected inf at index " << j << ", got " << X[j];
+      } else {
+        ASSERT_FALSE(std::isnan(X[j])) << "Unexpected NaN at index " << j;
+        ASSERT_NEAR(X[j], X_ref[j], 0.001f);
+      }
+    }
+  }
+}
+
 TEST(nntrainer_cpu_backend_standalone, tanh_gelu_v2_3072) {
   const unsigned int N = 3072;
   const int TEST_CNT = 20;
