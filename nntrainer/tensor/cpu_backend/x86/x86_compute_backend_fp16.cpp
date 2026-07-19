@@ -14,6 +14,7 @@
 #include <assert.h>
 #include <avx2_impl.h>
 #include <fallback_internal.h>
+#include <hgemm.h>
 #include <nntrainer_error.h>
 #include <tensor_dim.h>
 #include <x86_compute_backend.h>
@@ -32,6 +33,12 @@ void shgemm(const unsigned int TStorageOrder, bool TransA, bool TransB,
             const float alpha, const float *A, const unsigned int lda,
             const _FP16 *B, const unsigned int ldb, const float beta, float *C,
             const unsigned int ldc) {
+  if (TStorageOrder == ROW_MAJOR) {
+    nntrainer::hgemm::shgemm(A, B, C, M, N, K, lda, ldb, ldc, alpha, beta,
+                             TransA, TransB);
+    return;
+  }
+
   float *B_ = new float[N * K];
   scopy(N * K, B, 1, B_, 1);
 
@@ -78,6 +85,12 @@ void hsgemm(const unsigned int TStorageOrder, bool TransA, bool TransB,
             const float alpha, const _FP16 *A, const unsigned int lda,
             const float *B, const unsigned int ldb, const float beta, float *C,
             const unsigned int ldc) {
+  if (TStorageOrder == ROW_MAJOR) {
+    nntrainer::hgemm::hsgemm(A, B, C, M, N, K, lda, ldb, ldc, alpha, beta,
+                             TransA, TransB);
+    return;
+  }
+
   float *A_ = new float[M * K];
 
   scopy(M * K, A, 1, A_, 1);
@@ -185,8 +198,16 @@ void sgemm(const unsigned int TStorageOrder, bool TransA, bool TransB,
            const float alpha, const _FP16 *A, const unsigned int lda,
            const _FP16 *B, const unsigned int ldb, const float beta, _FP16 *C,
            const unsigned int ldc) {
-#ifdef USE_BLAS
+  if (TStorageOrder == ROW_MAJOR) {
+    nntrainer::hgemm::hgemm(A, B, C, M, N, K, lda, ldb, ldc, alpha, beta,
+                            TransA, TransB);
+    return;
+  }
 
+  // The cache-blocked hgemm path is row-major only, so column-major inputs fall
+  // back to the legacy FP32-conversion path. CBLAS honors TStorageOrder;
+  // __fallback_sgemm does not, so it is only valid as the non-BLAS baseline.
+#ifdef USE_BLAS
   float *A_ = new float[M * K];
   float *B_ = new float[N * K];
   float *C_ = new float[M * N];
@@ -319,7 +340,19 @@ template <>
 void gemm_q4_0(const unsigned int M, const unsigned int N, const unsigned int K,
                const _FP16 *A, const unsigned int lda, const void *B,
                const unsigned int ldb, _FP16 *C, const unsigned int ldc) {
-  return __fallback_gemm_q4_0(M, N, K, A, lda, B, ldb, C, ldc);
+  float *A_fp32 = new float[M * lda];
+  float *C_fp32 = new float[M * ldc];
+
+  for (unsigned int i = 0; i < M; ++i)
+    nntrainer::avx2::vcvt_f16_f32(K, A + i * lda, A_fp32 + i * lda);
+
+  __ggml_q4_0_8x8_q8_0_GEMM(M, N, K, A_fp32, lda, B, ldb, C_fp32, ldc);
+
+  for (unsigned int i = 0; i < M; ++i)
+    nntrainer::avx2::vcvt_f32_f16(N, C_fp32 + i * ldc, C + i * ldc);
+
+  delete[] A_fp32;
+  delete[] C_fp32;
 }
 
 template <> void quantize_row_q8_K(const _FP16 *src, void *dst, int64_t k) {
