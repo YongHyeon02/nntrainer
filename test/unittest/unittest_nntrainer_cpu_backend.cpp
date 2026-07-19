@@ -1864,6 +1864,187 @@ TEST(nntrainer_cpu_backend_standalone, calc_trigonometric_vals_dup_512) {
   }
 }
 
+// ============================================================================
+// P2: AVX2+F16C replacement tests for formerly-fallback FP16 functions
+// ============================================================================
+#ifdef ENABLE_FP16
+
+static void run_ele_mul_fp16_test(const unsigned int N, float alpha, float beta,
+                                  unsigned int i_stride,
+                                  unsigned int o_stride) {
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X =
+      generate_random_vector<_FP16, false>((size_t)N * o_stride);
+    std::vector<_FP16> Y = generate_random_vector<_FP16, false>(
+      std::max<size_t>(1, (size_t)N * i_stride));
+    std::vector<_FP16> Z =
+      generate_random_vector<_FP16, false>((size_t)N * o_stride);
+    std::vector<_FP16> Z_ref = Z;
+
+    nntrainer::__fallback_ele_mul(N, X.data(), Y.data(), Z_ref.data(), alpha,
+                                  beta, i_stride, o_stride);
+    nntrainer::ele_mul(N, X.data(), Y.data(), Z.data(), alpha, beta, i_stride,
+                       o_stride);
+
+    auto mse_val = mse<_FP16, _FP16>(Z_ref.data(), Z.data(), N);
+    ASSERT_LE(mse_val, 0.0001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, ele_mul_fp16_3072_istr_0) {
+  run_ele_mul_fp16_test(3072, 1.f, 0.f, 0, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_mul_fp16_3072_istr_1) {
+  run_ele_mul_fp16_test(3072, 1.f, 0.f, 1, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_mul_fp16_7_istr_1) {
+  run_ele_mul_fp16_test(7, 1.f, 0.f, 1, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_mul_fp16_3072_alpha_beta) {
+  run_ele_mul_fp16_test(3072, 3.f, 2.f, 1, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_mul_fp16_alpha_beta_istr_0) {
+  run_ele_mul_fp16_test(3072, 2.f, 1.5f, 0, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_mul_fp16_ostr_2) {
+  run_ele_mul_fp16_test(256, 1.f, 0.f, 1, 2);
+}
+
+static void run_ele_add_fp16_test(const unsigned int N, float alpha, float beta,
+                                  unsigned int i_stride,
+                                  unsigned int o_stride) {
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X =
+      generate_random_vector<_FP16, false>((size_t)N * o_stride);
+    std::vector<_FP16> Y = generate_random_vector<_FP16, false>(
+      std::max<size_t>(1, (size_t)N * i_stride));
+    std::vector<_FP16> Z =
+      generate_random_vector<_FP16, false>((size_t)N * o_stride);
+    std::vector<_FP16> Z_ref = Z;
+
+    nntrainer::__fallback_ele_add(N, X.data(), Y.data(), Z_ref.data(), alpha,
+                                  beta, i_stride, o_stride);
+    nntrainer::ele_add(N, X.data(), Y.data(), Z.data(), alpha, beta, i_stride,
+                       o_stride);
+
+    auto mse_val = mse<_FP16, _FP16>(Z_ref.data(), Z.data(), N);
+    ASSERT_LE(mse_val, 0.0001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, ele_add_fp16_3072_istr_0) {
+  run_ele_add_fp16_test(3072, 1.f, 0.f, 0, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_add_fp16_3072_istr_1) {
+  run_ele_add_fp16_test(3072, 1.f, 0.f, 1, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_add_fp16_7_istr_1) {
+  run_ele_add_fp16_test(7, 1.f, 0.f, 1, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_add_fp16_3072_alpha_beta) {
+  run_ele_add_fp16_test(3072, 3.f, 2.f, 1, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_add_fp16_alpha_beta_istr_0) {
+  run_ele_add_fp16_test(3072, 2.f, 1.5f, 0, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_add_fp16_ostr_2) {
+  run_ele_add_fp16_test(256, 1.f, 0.f, 1, 2);
+}
+
+static void run_ele_sub_fp16_test(const unsigned int N, float alpha, float beta,
+                                  unsigned int i_stride,
+                                  unsigned int o_stride) {
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X =
+      generate_random_vector<_FP16, false>((size_t)N * o_stride);
+    std::vector<_FP16> Y = generate_random_vector<_FP16, false>(
+      std::max<size_t>(1, (size_t)N * i_stride));
+    std::vector<_FP16> Z =
+      generate_random_vector<_FP16, false>((size_t)N * o_stride);
+    std::vector<_FP16> Z_ref = Z;
+
+    nntrainer::__fallback_ele_sub(N, X.data(), Y.data(), Z_ref.data(), alpha,
+                                  beta, i_stride, o_stride);
+    nntrainer::ele_sub(N, X.data(), Y.data(), Z.data(), alpha, beta, i_stride,
+                       o_stride);
+
+    auto mse_val = mse<_FP16, _FP16>(Z_ref.data(), Z.data(), N);
+    ASSERT_LE(mse_val, 0.0001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, ele_sub_fp16_3072_istr_0) {
+  run_ele_sub_fp16_test(3072, 1.f, 0.f, 0, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_sub_fp16_3072_istr_1) {
+  run_ele_sub_fp16_test(3072, 1.f, 0.f, 1, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_sub_fp16_alpha1_beta0_istr_2) {
+  run_ele_sub_fp16_test(3072, 1.f, 0.f, 2, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_sub_fp16_3072_alpha_beta) {
+  run_ele_sub_fp16_test(3072, 3.f, 2.f, 1, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_sub_fp16_alpha_beta_istr_0) {
+  run_ele_sub_fp16_test(3072, 2.f, 1.5f, 0, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_sub_fp16_7_istr_1) {
+  run_ele_sub_fp16_test(7, 1.f, 0.f, 1, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_sub_fp16_ostr_2) {
+  run_ele_sub_fp16_test(256, 1.f, 0.f, 1, 2);
+}
+
+static void run_ele_div_fp16_test(const unsigned int N, float alpha, float beta,
+                                  unsigned int i_stride,
+                                  unsigned int o_stride) {
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X =
+      generate_random_vector<_FP16, false>((size_t)N * o_stride);
+    std::vector<_FP16> Y = generate_random_vector<_FP16, false>(
+      std::max<size_t>(1, (size_t)N * i_stride), 0.1f, 1.0f);
+    std::vector<_FP16> Z =
+      generate_random_vector<_FP16, false>((size_t)N * o_stride);
+    std::vector<_FP16> Z_ref = Z;
+
+    nntrainer::__fallback_ele_div(N, X.data(), Y.data(), Z_ref.data(), alpha,
+                                  beta, i_stride, o_stride);
+    nntrainer::ele_div(N, X.data(), Y.data(), Z.data(), alpha, beta, i_stride,
+                       o_stride);
+
+    auto mse_val = mse<_FP16, _FP16>(Z_ref.data(), Z.data(), N);
+    ASSERT_LE(mse_val, 0.0001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, ele_div_fp16_3072_istr_0) {
+  run_ele_div_fp16_test(3072, 1.f, 0.f, 0, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_div_fp16_3072_istr_1) {
+  run_ele_div_fp16_test(3072, 1.f, 0.f, 1, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_div_fp16_alpha1_beta0_istr_2) {
+  run_ele_div_fp16_test(3072, 1.f, 0.f, 2, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_div_fp16_3072_alpha_beta) {
+  run_ele_div_fp16_test(3072, 3.f, 2.f, 1, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_div_fp16_alpha_beta_istr_0) {
+  run_ele_div_fp16_test(3072, 2.f, 1.5f, 0, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_div_fp16_7_istr_1) {
+  run_ele_div_fp16_test(7, 1.f, 0.f, 1, 1);
+}
+TEST(nntrainer_cpu_backend_standalone, ele_div_fp16_ostr_2) {
+  run_ele_div_fp16_test(256, 1.f, 0.f, 1, 2);
+}
+
+#endif // ENABLE_FP16
+
 int main(int argc, char **argv) {
   int result = -1;
 

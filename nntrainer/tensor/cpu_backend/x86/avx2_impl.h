@@ -53,6 +53,19 @@ void vcvt_f32_f16(unsigned int N, const float *input, _Float16 *output);
  * @param[out] false if it has NaN or inf
  */
 bool is_valid(const unsigned int N, const _Float16 *X);
+
+void ele_mul(const unsigned int N, const _Float16 *X, const _Float16 *Y,
+             _Float16 *Z, float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride);
+void ele_add(const unsigned int N, const _Float16 *X, const _Float16 *Y,
+             _Float16 *Z, float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride);
+void ele_sub(const unsigned int N, const _Float16 *X, const _Float16 *Y,
+             _Float16 *Z, float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride);
+void ele_div(const unsigned int N, const _Float16 *X, const _Float16 *Y,
+             _Float16 *Z, float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride);
 #endif
 
 /**

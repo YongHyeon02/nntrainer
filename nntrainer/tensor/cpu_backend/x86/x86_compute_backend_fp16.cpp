@@ -242,25 +242,25 @@ void sgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,
 void ele_mul(const unsigned int N, const _FP16 *X, const _FP16 *Y, _FP16 *Z,
              float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
-  __fallback_ele_mul(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+  avx2::ele_mul(N, X, Y, Z, alpha, beta, i_stride, o_stride);
 }
 
 void ele_add(const unsigned int N, const _FP16 *X, const _FP16 *Y, _FP16 *Z,
              float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
-  __fallback_ele_add(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+  avx2::ele_add(N, X, Y, Z, alpha, beta, i_stride, o_stride);
 }
 
 void ele_sub(const unsigned N, const _FP16 *X, const _FP16 *Y, _FP16 *Z,
              float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
-  __fallback_ele_sub(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+  avx2::ele_sub(N, X, Y, Z, alpha, beta, i_stride, o_stride);
 }
 
 void ele_div(const unsigned N, const _FP16 *X, const _FP16 *Y, _FP16 *Z,
              float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
-  __fallback_ele_div(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+  avx2::ele_div(N, X, Y, Z, alpha, beta, i_stride, o_stride);
 }
 
 unsigned int isamax(const unsigned int N, const _FP16 *X,
