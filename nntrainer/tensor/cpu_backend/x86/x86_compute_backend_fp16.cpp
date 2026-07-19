@@ -50,8 +50,13 @@ void shgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,
             const unsigned int N, const float alpha, const float *A,
             const unsigned int lda, const _FP16 *X, const unsigned int incX,
             const float beta, float *Y, const unsigned int incY) {
-  unsigned int lenX = (TransA) ? 1 + (M - 1) * (incX) : 1 + (N - 1) * (incX);
-  unsigned int lenY = (TransA) ? 1 + (N - 1) * (incY) : 1 + (M - 1) * (incY);
+  if (TStorageOrder == ROW_MAJOR) {
+    avx2::shgemv(TransA, M, N, alpha, A, lda, X, incX, beta, Y, incY);
+    return;
+  }
+
+  const unsigned int lenX =
+    (TransA) ? 1 + (M - 1) * (incX) : 1 + (N - 1) * (incX);
 
   float *X_ = new float[lenX];
 
@@ -92,8 +97,10 @@ void hsgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,
             const unsigned int N, const float alpha, const _FP16 *A,
             const unsigned int lda, const float *X, const unsigned int incX,
             const float beta, float *Y, const unsigned int incY) {
-  unsigned int lenX = (TransA) ? 1 + (M - 1) * (incX) : 1 + (N - 1) * (incX);
-  unsigned int lenY = (TransA) ? 1 + (N - 1) * (incY) : 1 + (M - 1) * (incY);
+  if (TStorageOrder == ROW_MAJOR) {
+    avx2::hsgemv(TransA, M, N, alpha, A, lda, X, incX, beta, Y, incY);
+    return;
+  }
 
   float *A_ = new float[M * N];
 
@@ -206,6 +213,10 @@ void sgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,
            const unsigned int N, const float alpha, const _FP16 *A,
            const unsigned int lda, const _FP16 *X, const unsigned int incX,
            const float beta, _FP16 *Y, const unsigned int incY) {
+  if (TStorageOrder == ROW_MAJOR) {
+    avx2::hgemv(TransA, M, N, alpha, A, lda, X, incX, beta, Y, incY);
+    return;
+  }
 #ifdef USE_BLAS
   unsigned int lenX = (TransA) ? 1 + (M - 1) * (incX) : 1 + (N - 1) * (incX);
   unsigned int lenY = (TransA) ? 1 + (N - 1) * (incY) : 1 + (M - 1) * (incY);
