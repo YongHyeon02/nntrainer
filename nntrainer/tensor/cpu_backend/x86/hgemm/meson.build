@@ -2,6 +2,9 @@
 # only through the cpu_backend dispatch inside this library, so they are added to
 # the include path below but intentionally not installed.
 
+subdir('hgemm_kernel')
+nntrainer_inc += include_directories('hgemm_kernel')
+nntrainer_inc_abs += meson.current_source_dir() / 'hgemm_kernel'
 
 x86_hgemm_sources = [
   'hgemm_pack.cpp',
