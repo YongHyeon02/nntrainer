@@ -770,6 +770,45 @@ void gelu_v2(const unsigned int N, const float *X, float *Y) {
   }
 }
 
+void tanh_gelu(const unsigned int N, const float *X, float *Y) {
+  unsigned int i = 0;
+
+  for (; i + 8 <= N; i += 8) {
+    __m256 x = _mm256_loadu_ps(&X[i]);
+    __m256 y = poly_gelu_tanh_avx2(x);
+    _mm256_storeu_ps(&Y[i], y);
+  }
+
+  for (; i < N; ++i) {
+    const float x = X[i];
+    Y[i] = 0.5f * x *
+           (1.0f + std::tanh(0.7978845608f * (x + 0.044715f * x * x * x)));
+  }
+}
+
+void tanh_gelu_mul(const unsigned int N, float *X, float *Y, float *Z) {
+  unsigned int i = 0;
+
+  for (; i + 8 <= N; i += 8) {
+    __m256 y = _mm256_loadu_ps(&Y[i]);
+    __m256 g = poly_gelu_tanh_avx2(y);
+    __m256 z = _mm256_loadu_ps(&Z[i]);
+    _mm256_storeu_ps(&X[i], _mm256_mul_ps(g, z));
+  }
+
+  for (; i < N; ++i) {
+    const float y = Y[i];
+    float gelu_y =
+      0.5f * y *
+      (1.0f + std::tanh(0.7978845608f * (y + 0.044715f * y * y * y)));
+    X[i] = gelu_y * Z[i];
+  }
+}
+
+void tanh_gelu_v2_mul(const unsigned int N, float *X, float *Y, float *Z) {
+  tanh_gelu_mul(N, X, Y, Z);
+}
+
 float max_val(const unsigned int N, float *X) {
   unsigned int i = 0;
   __m256 vmax = _mm256_set1_ps(-std::numeric_limits<float>::infinity());

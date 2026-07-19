@@ -300,8 +300,7 @@ void swiglu(const unsigned int N, float *X, float *Y, float *Z, float alpha) {
 }
 
 void tanh_gelu(const unsigned int N, const float *X, float *Y) {
-  // AVX implmenetation will be implemented, now fallback instead
-  __fallback_tanh_gelu(N, X, Y);
+  nntrainer::avx2::tanh_gelu(N, X, Y);
 }
 
 void tanh_gelu_v2(const unsigned int N, const float *X, float *Y) {
@@ -313,11 +312,11 @@ void gelu_v2(const unsigned int N, const float *X, float *Y) {
 }
 
 void tanh_gelu_mul(const unsigned int N, float *X, float *Y, float *Z) {
-  __fallback_tanh_gelu_mul(N, X, Y, Z);
+  nntrainer::avx2::tanh_gelu_mul(N, X, Y, Z);
 }
 
 void tanh_gelu_v2_mul(const unsigned int N, float *X, float *Y, float *Z) {
-  __fallback_tanh_gelu_mul(N, X, Y, Z);
+  nntrainer::avx2::tanh_gelu_v2_mul(N, X, Y, Z);
 }
 
 float max_val(const unsigned int N, float *X) {

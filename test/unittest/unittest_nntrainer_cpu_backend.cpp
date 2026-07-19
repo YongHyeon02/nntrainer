@@ -1664,6 +1664,58 @@ TEST(nntrainer_cpu_backend_standalone, ele_div_3072_alpha1_beta0_istr_2) {
   run_ele_div_test(3072, 1.f, 0.f, 2, 1);
 }
 
+TEST(nntrainer_cpu_backend_standalone, tanh_gelu_3072) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<float> X = generate_random_vector<float, false>(N);
+    std::vector<float> Y(N), Y_ref(N);
+
+    nntrainer::__fallback_tanh_gelu(N, X.data(), Y_ref.data());
+    nntrainer::tanh_gelu(N, X.data(), Y.data());
+
+    auto mse = compute_mse(1, N, Y_ref, Y, false);
+    ASSERT_LE(mse, 0.00001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, tanh_gelu_mul_3072) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<float> Y = generate_random_vector<float, false>(N);
+    std::vector<float> Z = generate_random_vector<float, false>(N);
+    std::vector<float> X(N), X_ref(N);
+
+    nntrainer::__fallback_tanh_gelu_mul(N, X_ref.data(), Y.data(), Z.data());
+    // Restore Y since fallback may modify it
+    std::vector<float> Y2 = Y;
+    std::vector<float> Z2 = Z;
+    nntrainer::tanh_gelu_mul(N, X.data(), Y2.data(), Z2.data());
+
+    auto mse = compute_mse(1, N, X_ref, X, false);
+    ASSERT_LE(mse, 0.00001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, tanh_gelu_v2_mul_3072) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<float> Y = generate_random_vector<float, false>(N);
+    std::vector<float> Z = generate_random_vector<float, false>(N);
+    std::vector<float> X(N), X_ref(N);
+
+    nntrainer::__fallback_tanh_gelu_mul(N, X_ref.data(), Y.data(), Z.data());
+    std::vector<float> Y2 = Y;
+    std::vector<float> Z2 = Z;
+    nntrainer::tanh_gelu_v2_mul(N, X.data(), Y2.data(), Z2.data());
+
+    auto mse = compute_mse(1, N, X_ref, X, false);
+    ASSERT_LE(mse, 0.00001f);
+  }
+}
+
 TEST(nntrainer_cpu_backend_standalone, max_val_3072) {
   const unsigned int N = 3072;
   const int TEST_CNT = 20;
@@ -1686,6 +1738,21 @@ TEST(nntrainer_cpu_backend_standalone, softmax_3072) {
 
     nntrainer::__fallback_softmax(N, X.data(), Y_ref.data());
     nntrainer::softmax(N, X.data(), Y.data());
+
+    auto mse = compute_mse(1, N, Y_ref, Y, false);
+    ASSERT_LE(mse, 0.00001f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, tanh_gelu_v2_3072) {
+  const unsigned int N = 3072;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<float> X = generate_random_vector<float, false>(N);
+    std::vector<float> Y(N), Y_ref(N);
+
+    nntrainer::__fallback_tanh_gelu(N, X.data(), Y_ref.data());
+    nntrainer::tanh_gelu_v2(N, X.data(), Y.data());
 
     auto mse = compute_mse(1, N, Y_ref, Y, false);
     ASSERT_LE(mse, 0.00001f);

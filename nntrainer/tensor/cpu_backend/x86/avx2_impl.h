@@ -103,6 +103,36 @@ void transpose_matrix(const unsigned int M, const unsigned int N,
                       unsigned int ld_dst);
 
 /**
+ * @brief tanh_gelu function with AVX2 polynomial approximation
+ *        Y = 0.5 * X * (1 + tanh(sqrt(2/pi) * (X + 0.044715 * X^3)))
+ *
+ * @param N number of elements in X
+ * @param X const float * for Vector X (input)
+ * @param Y float * for Vector Y (output)
+ */
+void tanh_gelu(const unsigned int N, const float *X, float *Y);
+
+/**
+ * @brief tanh_gelu_mul function with AVX2: X = GELU(Y) * Z
+ *
+ * @param N number of elements
+ * @param X float * for output
+ * @param Y float * for GELU input
+ * @param Z float * for multiply input
+ */
+void tanh_gelu_mul(const unsigned int N, float *X, float *Y, float *Z);
+
+/**
+ * @brief tanh_gelu_v2_mul function with AVX2: X = GELU(Y) * Z
+ *
+ * @param N number of elements
+ * @param X float * for output
+ * @param Y float * for GELU input
+ * @param Z float * for multiply input
+ */
+void tanh_gelu_v2_mul(const unsigned int N, float *X, float *Y, float *Z);
+
+/**
  * @brief returns maximum value of the vector X
  *
  * @param N number of elements in X
