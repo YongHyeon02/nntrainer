@@ -1299,6 +1299,151 @@ void swiglu(const unsigned int N, _Float16 *X, _Float16 *Y, _Float16 *Z) {
 }
 
 // ============================================================
+// FP16 rms_norm and rotary embedding
+// ============================================================
+
+void rms_norm_wrt_width_fp16(const _Float16 *__restrict X,
+                             _Float16 *__restrict Y, size_t H, size_t W,
+                             float epsilon) {
+  for (size_t h = 0; h < H; ++h) {
+    const _Float16 *rowX = X + h * W;
+    _Float16 *rowY = Y + h * W;
+
+    size_t i = 0;
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+    __m256 acc2 = _mm256_setzero_ps();
+    __m256 acc3 = _mm256_setzero_ps();
+
+    // Sum-of-squares: 32-wide loop with 256-bit loads
+    for (; i + 32 <= W; i += 32) {
+      __m256i raw0 = _mm256_loadu_si256((const __m256i *)(rowX + i));
+      __m256i raw1 = _mm256_loadu_si256((const __m256i *)(rowX + i + 16));
+      __m256 x0 = _mm256_cvtph_ps(_mm256_castsi256_si128(raw0));
+      __m256 x1 = _mm256_cvtph_ps(_mm256_extracti128_si256(raw0, 1));
+      __m256 x2 = _mm256_cvtph_ps(_mm256_castsi256_si128(raw1));
+      __m256 x3 = _mm256_cvtph_ps(_mm256_extracti128_si256(raw1, 1));
+      acc0 = _mm256_fmadd_ps(x0, x0, acc0);
+      acc1 = _mm256_fmadd_ps(x1, x1, acc1);
+      acc2 = _mm256_fmadd_ps(x2, x2, acc2);
+      acc3 = _mm256_fmadd_ps(x3, x3, acc3);
+    }
+    // 16-wide tail
+    if (i + 16 <= W) {
+      __m256i raw = _mm256_loadu_si256((const __m256i *)(rowX + i));
+      __m256 x0 = _mm256_cvtph_ps(_mm256_castsi256_si128(raw));
+      __m256 x1 = _mm256_cvtph_ps(_mm256_extracti128_si256(raw, 1));
+      acc0 = _mm256_fmadd_ps(x0, x0, acc0);
+      acc1 = _mm256_fmadd_ps(x1, x1, acc1);
+      i += 16;
+    }
+    // 8-wide tail
+    if (i + 8 <= W) {
+      __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(rowX + i)));
+      acc0 = _mm256_fmadd_ps(x, x, acc0);
+      i += 8;
+    }
+    float sumsq =
+      hsum_avx(acc0) + hsum_avx(acc1) + hsum_avx(acc2) + hsum_avx(acc3);
+    for (; i < W; ++i) {
+      float v = static_cast<float>(rowX[i]);
+      sumsq += v * v;
+    }
+
+    float mean = sumsq / static_cast<float>(W);
+    float scale = 1.0f / std::sqrt(mean + epsilon);
+    __m256 vscale = _mm256_set1_ps(scale);
+
+    // Scaling pass: 32-wide loop with 256-bit loads/stores
+    i = 0;
+    for (; i + 32 <= W; i += 32) {
+      __m256i raw0 = _mm256_loadu_si256((const __m256i *)(rowX + i));
+      __m256i raw1 = _mm256_loadu_si256((const __m256i *)(rowX + i + 16));
+      __m256 x0 = _mm256_cvtph_ps(_mm256_castsi256_si128(raw0));
+      __m256 x1 = _mm256_cvtph_ps(_mm256_extracti128_si256(raw0, 1));
+      __m256 x2 = _mm256_cvtph_ps(_mm256_castsi256_si128(raw1));
+      __m256 x3 = _mm256_cvtph_ps(_mm256_extracti128_si256(raw1, 1));
+      __m128i r0 =
+        _mm256_cvtps_ph(_mm256_mul_ps(x0, vscale), _MM_FROUND_TO_NEAREST_INT);
+      __m128i r1 =
+        _mm256_cvtps_ph(_mm256_mul_ps(x1, vscale), _MM_FROUND_TO_NEAREST_INT);
+      __m128i r2 =
+        _mm256_cvtps_ph(_mm256_mul_ps(x2, vscale), _MM_FROUND_TO_NEAREST_INT);
+      __m128i r3 =
+        _mm256_cvtps_ph(_mm256_mul_ps(x3, vscale), _MM_FROUND_TO_NEAREST_INT);
+      _mm256_storeu_si256(
+        (__m256i *)(rowY + i),
+        _mm256_inserti128_si256(_mm256_castsi128_si256(r0), r1, 1));
+      _mm256_storeu_si256(
+        (__m256i *)(rowY + i + 16),
+        _mm256_inserti128_si256(_mm256_castsi128_si256(r2), r3, 1));
+    }
+    // 16-wide tail
+    if (i + 16 <= W) {
+      __m256i raw = _mm256_loadu_si256((const __m256i *)(rowX + i));
+      __m256 x0 = _mm256_cvtph_ps(_mm256_castsi256_si128(raw));
+      __m256 x1 = _mm256_cvtph_ps(_mm256_extracti128_si256(raw, 1));
+      __m128i r0 =
+        _mm256_cvtps_ph(_mm256_mul_ps(x0, vscale), _MM_FROUND_TO_NEAREST_INT);
+      __m128i r1 =
+        _mm256_cvtps_ph(_mm256_mul_ps(x1, vscale), _MM_FROUND_TO_NEAREST_INT);
+      _mm256_storeu_si256(
+        (__m256i *)(rowY + i),
+        _mm256_inserti128_si256(_mm256_castsi128_si256(r0), r1, 1));
+      i += 16;
+    }
+    // 8-wide tail
+    if (i + 8 <= W) {
+      __m256 x = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(rowX + i)));
+      _mm_storeu_si128(
+        (__m128i *)(rowY + i),
+        _mm256_cvtps_ph(_mm256_mul_ps(x, vscale), _MM_FROUND_TO_NEAREST_INT));
+      i += 8;
+    }
+    for (; i < W; ++i) {
+      rowY[i] = static_cast<_Float16>(static_cast<float>(rowX[i]) * scale);
+    }
+  }
+}
+
+void compute_rotary_embedding_value(unsigned int dim, unsigned int half_,
+                                    unsigned int w, _Float16 *in, _Float16 *out,
+                                    float *cos_, float *sin_) {
+  unsigned int k = 0;
+  for (; k + 7 < half_; k += 8) {
+    unsigned int i0 = w + k;
+    unsigned int i1 = w + k + half_;
+
+    __m256 a = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(in + i0)));
+    __m256 b = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(in + i1)));
+    __m256 cos_v = _mm256_loadu_ps(&cos_[k]);
+    __m256 sin_v = _mm256_loadu_ps(&sin_[k]);
+
+    // FMA: out0 = a*cos - b*sin, out1 = a*sin + b*cos
+    __m256 out0 = _mm256_fmsub_ps(a, cos_v, _mm256_mul_ps(b, sin_v));
+    __m256 out1 = _mm256_fmadd_ps(a, sin_v, _mm256_mul_ps(b, cos_v));
+
+    _mm_storeu_si128((__m128i *)(out + i0),
+                     _mm256_cvtps_ph(out0, _MM_FROUND_TO_NEAREST_INT));
+    _mm_storeu_si128((__m128i *)(out + i1),
+                     _mm256_cvtps_ph(out1, _MM_FROUND_TO_NEAREST_INT));
+  }
+
+  for (; k < dim; ++k) {
+    unsigned int span = w + k;
+    float value = static_cast<float>(in[span]);
+    float transformed_value;
+    if (k < half_) {
+      transformed_value = -1.0f * static_cast<float>(in[w + k + half_]);
+    } else {
+      transformed_value = static_cast<float>(in[w + k - half_]);
+    }
+    out[span] =
+      static_cast<_Float16>(value * cos_[k] + transformed_value * sin_[k]);
+  }
+}
+
+// ============================================================
 // FP16 Group B functions
 // ============================================================
 

@@ -83,6 +83,12 @@ _Float16 max_val(const unsigned int N, _Float16 *X);
 void softmax(const unsigned int N, _Float16 *X, _Float16 *Y);
 void inv_sqrt_inplace(const unsigned int N, _Float16 *X);
 void swiglu(const unsigned int N, _Float16 *X, _Float16 *Y, _Float16 *Z);
+void rms_norm_wrt_width_fp16(const _Float16 *__restrict X,
+                             _Float16 *__restrict Y, size_t H, size_t W,
+                             float epsilon);
+void compute_rotary_embedding_value(unsigned int dim, unsigned int half_,
+                                    unsigned int w, _Float16 *in, _Float16 *out,
+                                    float *cos_, float *sin_);
 
 unsigned int isamax(const unsigned int N, const _Float16 *X,
                     const unsigned int incX);

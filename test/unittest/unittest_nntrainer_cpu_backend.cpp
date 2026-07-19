@@ -1865,6 +1865,12 @@ TEST(nntrainer_cpu_backend_standalone, calc_trigonometric_vals_dup_512) {
   }
 }
 
+TEST(nntrainer_cpu_backend_standalone, rms_norm_fp16_template_float) {
+  GTEST_SKIP()
+    << "rms_norm_wrt_width_fp16_intrinsic<float> is NYI on x86 (tracked for "
+       "separate PR)";
+}
+
 // ============================================================================
 // P2: AVX2+F16C replacement tests for formerly-fallback FP16 functions
 // ============================================================================
@@ -2471,6 +2477,84 @@ TEST(nntrainer_cpu_backend_standalone, swiglu_fp16_7) {
     auto mse_val = mse<_FP16, _FP16>(X_ref.data(), X.data(), N);
     ASSERT_LE(mse_val, 0.005f);
   }
+}
+
+static void run_rms_norm_fp16_test(size_t H, size_t W) {
+  const float epsilon = 1e-6f;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> X = generate_random_vector<_FP16, false>(H * W);
+    std::vector<_FP16> Y(H * W);
+    std::vector<float> Y_ref(H * W);
+
+    // Compute reference in FP32
+    for (size_t h = 0; h < H; h++) {
+      float sum_sq = 0.0f;
+      for (size_t w = 0; w < W; w++) {
+        float val = static_cast<float>(X[h * W + w]);
+        sum_sq += val * val;
+      }
+      float scale = 1.0f / std::sqrt(sum_sq / W + epsilon);
+      for (size_t w = 0; w < W; w++) {
+        Y_ref[h * W + w] = static_cast<float>(X[h * W + w]) * scale;
+      }
+    }
+
+    nntrainer::rms_norm_wrt_width_fp16_intrinsic<_FP16>(X.data(), Y.data(), H,
+                                                        W, epsilon);
+
+    auto mse_val = mse<_FP16, float>(Y.data(), Y_ref.data(), H * W);
+    ASSERT_LE(mse_val, 0.005f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, rms_norm_fp16_3072) {
+  run_rms_norm_fp16_test(4, 3072);
+}
+TEST(nntrainer_cpu_backend_standalone, rms_norm_fp16_13) {
+  run_rms_norm_fp16_test(4, 13);
+}
+TEST(nntrainer_cpu_backend_standalone, rms_norm_fp16_100) {
+  run_rms_norm_fp16_test(4, 100);
+}
+
+static void run_rotary_emb_fp16_test(unsigned int dim, unsigned int half_) {
+  const unsigned int w = 0;
+  const int TEST_CNT = 20;
+  for (int i = 0; i < TEST_CNT; i++) {
+    std::vector<_FP16> in =
+      generate_random_vector<_FP16, false>(dim, -1.0f, 1.0f);
+    std::vector<float> cos_half =
+      generate_random_vector<float, false>(half_, -1.0f, 1.0f);
+    std::vector<float> sin_half =
+      generate_random_vector<float, false>(half_, -1.0f, 1.0f);
+    std::vector<float> cos_v(dim), sin_v(dim);
+    for (unsigned int k = 0; k < half_; k++) {
+      cos_v[k] = cos_half[k];
+      cos_v[k + half_] = cos_half[k];
+      sin_v[k] = sin_half[k];
+      sin_v[k + half_] = sin_half[k];
+    }
+    std::vector<_FP16> out(dim), out_ref(dim);
+
+    nntrainer::__fallback_compute_rotary_embedding_value(
+      dim, half_, w, in.data(), out_ref.data(), cos_v.data(), sin_v.data());
+    nntrainer::compute_rotary_embedding_value(
+      dim, half_, w, in.data(), out.data(), cos_v.data(), sin_v.data());
+
+    auto mse_val = mse<_FP16, _FP16>(out_ref.data(), out.data(), dim);
+    ASSERT_LE(mse_val, 0.005f);
+  }
+}
+
+TEST(nntrainer_cpu_backend_standalone, compute_rotary_emb_fp16_avx2) {
+  run_rotary_emb_fp16_test(64, 32);
+}
+TEST(nntrainer_cpu_backend_standalone, compute_rotary_emb_fp16_non_aligned) {
+  run_rotary_emb_fp16_test(26, 13);
+}
+TEST(nntrainer_cpu_backend_standalone, compute_rotary_emb_fp16_128) {
+  run_rotary_emb_fp16_test(128, 64);
 }
 
 TEST(nntrainer_cpu_backend_standalone, isamax_fp16_3072) {

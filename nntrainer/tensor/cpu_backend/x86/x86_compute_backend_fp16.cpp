@@ -281,7 +281,7 @@ bool is_valid(const unsigned int N, const _FP16 *input) {
 void compute_rotary_embedding_value(unsigned int dim, unsigned int half_,
                                     unsigned int w, _FP16 *in, _FP16 *out,
                                     float *cos_, float *sin_) {
-  __fallback_compute_rotary_embedding_value(dim, half_, w, in, out, cos_, sin_);
+  avx2::compute_rotary_embedding_value(dim, half_, w, in, out, cos_, sin_);
 }
 
 void swiglu(const unsigned int N, _FP16 *X, _FP16 *Y, _FP16 *Z) {
@@ -330,7 +330,7 @@ template <>
 void rms_norm_wrt_width_fp16_intrinsic(const _FP16 *__restrict X,
                                        _FP16 *__restrict Y, size_t H, size_t W,
                                        float epsilon) {
-  __fallback_rms_norm_wrt_width_fp16_intrinsic<_FP16>(X, Y, H, W, epsilon);
+  avx2::rms_norm_wrt_width_fp16(X, Y, H, W, epsilon);
 }
 
 } /* namespace nntrainer */
