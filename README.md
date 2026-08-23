@@ -18,6 +18,14 @@
 
 ---
 
+> **Fork-specific x86 work:** This branch contains a public snapshot of the
+> AVX2/F16C CPU backend optimizations developed for NNTrainer, including FP32
+> kernels, FP16 GEMM/GEMV, and FP16 attention. See the
+> [x86 CPU backend optimization overview](docs/x86-cpu-backend-optimization.md)
+> and the [upstream PR history](https://github.com/nntrainer/nntrainer/pulls?q=author%3AYongHyeon02).
+
+---
+
 ## Run 30B MoE LLMs on a Mobile Phone
 
 NNTrainer makes it possible to run large-scale Mixture-of-Experts LLMs directly on mobile devices using **Flash Storage Utilization (FSU)** — loading experts on-the-fly from flash storage instead of keeping the entire model in memory.
